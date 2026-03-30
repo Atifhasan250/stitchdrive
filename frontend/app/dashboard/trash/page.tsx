@@ -90,24 +90,28 @@ export default function TrashPage() {
   async function handleBulkRestore() {
     if (selectedItems.size === 0) return;
     confirm(`Restore ${selectedItems.size} selected items?`, async () => {
-      const tid = toast(`Restoring ${selectedItems.size} items...`, "loading");
+      const currentSelected = new Set(selectedItems);
+      const tid = toast(`Restoring ${currentSelected.size} items...`, "loading");
+      setSelectionMode(false);
       try {
-        const promises = Array.from(selectedItems).map(key => {
+        const promises = Array.from(currentSelected).map(async (key) => {
           const [acc, fid] = key.split(":");
-          return fetch(`/api/files/trash/${acc}/${fid}/restore`, { method: "POST", credentials: "include" });
+          const res = await fetch(`/api/files/trash/${acc}/${fid}/restore`, { method: "POST", credentials: "include" });
+          return { key, ok: res.ok || res.status === 204 };
         });
-        const results = await Promise.allSettled(promises);
-        const succeeded = results.filter(r => r.status === "fulfilled" && (r.value.ok || r.value.status === 204)).length;
+        const results = await Promise.all(promises);
+        const succeededKeys = new Set(results.filter(r => r.ok).map(r => r.key));
         
-        setFiles(prev => prev.filter(f => !selectedItems.has(getItemKey(f))));
-        handleExitSelectionMode();
+        setFiles(prev => prev.filter(f => !succeededKeys.has(getItemKey(f))));
+        setSelectedItems(new Set());
         
-        if (succeeded === selectedItems.size) {
-           updateToast(tid, "success", `Restored ${succeeded} items`);
+        if (succeededKeys.size === currentSelected.size) {
+           updateToast(tid, "success", `Restored all ${succeededKeys.size} items successfully!`);
         } else {
-           updateToast(tid, "error", `Restored ${succeeded} of ${selectedItems.size} items`);
+           updateToast(tid, "error", `Restored ${succeededKeys.size} of ${currentSelected.size} items`);
         }
-      } catch {
+      } catch (err) {
+        console.error("[Trash] Bulk restore error:", err);
         updateToast(tid, "error", "Bulk restore failed");
       }
     }, { confirmLabel: "Restore" });
@@ -116,27 +120,31 @@ export default function TrashPage() {
   async function handleBulkDelete() {
     if (selectedItems.size === 0) return;
     confirm(`Permanently delete ${selectedItems.size} selected items?`, async () => {
-      const tid = toast(`Deleting ${selectedItems.size} items...`, "loading");
+      const currentSelected = new Set(selectedItems);
+      const tid = toast(`Deleting ${currentSelected.size} items permanently...`, "loading");
+      setSelectionMode(false);
       try {
-        const promises = Array.from(selectedItems).map(key => {
+        const promises = Array.from(currentSelected).map(async (key) => {
           const [acc, fid] = key.split(":");
-          return fetch(`/api/files/trash/${acc}/${fid}`, { method: "DELETE", credentials: "include" });
+          const res = await fetch(`/api/files/trash/${acc}/${fid}`, { method: "DELETE", credentials: "include" });
+          return { key, ok: res.ok || res.status === 204 };
         });
-        const results = await Promise.allSettled(promises);
-        const succeeded = results.filter(r => r.status === "fulfilled" && (r.value.ok || r.value.status === 204)).length;
+        const results = await Promise.all(promises);
+        const succeededKeys = new Set(results.filter(r => r.ok).map(r => r.key));
         
-        setFiles(prev => prev.filter(f => !selectedItems.has(getItemKey(f))));
-        handleExitSelectionMode();
+        setFiles(prev => prev.filter(f => !succeededKeys.has(getItemKey(f))));
+        setSelectedItems(new Set());
         
-        if (succeeded === selectedItems.size) {
-           updateToast(tid, "success", `Deleted ${succeeded} items`);
+        if (succeededKeys.size === currentSelected.size) {
+           updateToast(tid, "success", `Permanently deleted all ${succeededKeys.size} items`);
         } else {
-           updateToast(tid, "error", `Deleted ${succeeded} of ${selectedItems.size} items`);
+           updateToast(tid, "error", `Deleted ${succeededKeys.size} of ${currentSelected.size} items`);
         }
-      } catch {
+      } catch (err) {
+        console.error("[Trash] Bulk delete error:", err);
         updateToast(tid, "error", "Bulk delete failed");
       }
-    }, { confirmLabel: "Delete", danger: true });
+    }, { confirmLabel: "Delete permanently", danger: true });
   }
 
   const fetchTrash = useCallback(async () => {
@@ -172,12 +180,13 @@ export default function TrashPage() {
         setFiles((prev) => prev.filter(
           (f) => !(f.drive_file_id === file.drive_file_id && f.account_index === file.account_index)
         ));
-        updateToast(tid, "success", `"${file.file_name}" restored`);
+        updateToast(tid, "success", `Restored "${file.file_name}" to original location`);
       } else {
-        updateToast(tid, "error", "Restore failed");
+        const err = await res.json().catch(() => ({}));
+        updateToast(tid, "error", `Restore failed: ${err.detail || 'Access denied'}`);
       }
-    } catch {
-      updateToast(tid, "error", "Restore failed");
+    } catch (err: any) {
+      updateToast(tid, "error", `Restore failed: ${err.message}`);
     }
     setActing(null);
   }
@@ -195,12 +204,13 @@ export default function TrashPage() {
         setFiles((prev) => prev.filter(
           (f) => !(f.drive_file_id === file.drive_file_id && f.account_index === file.account_index)
         ));
-        updateToast(tid, "success", "Deleted permanently");
+        updateToast(tid, "success", "Deleted permanently from Google Drive");
       } else {
-        updateToast(tid, "error", "Delete failed");
+        const err = await res.json().catch(() => ({}));
+        updateToast(tid, "error", `Delete failed: ${err.detail || 'Access denied'}`);
       }
-    } catch {
-      updateToast(tid, "error", "Delete failed");
+    } catch (err: any) {
+      updateToast(tid, "error", `Delete failed: ${err.message}`);
     }
     setActing(null);
   }

@@ -3,7 +3,7 @@ import fetch from "node-fetch";
 import DriveAccount from "../models/DriveAccount.js";
 import File from "../models/File.js";
 import {
-  deleteDriveFile,
+  getOAuth2Client,
   listSharedFiles,
   listSharedFolderChildren,
   listTrashFiles,
@@ -18,6 +18,8 @@ import {
   trashDriveFile,
   unshareFile,
   uploadFile,
+  buildService,
+  deleteDriveFile,
 } from "../services/driveService.js";
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -58,43 +60,101 @@ export async function listFiles(req, res) {
   return res.json(files.map(fileToDict));
 }
 
-// ── POST /api/files/upload ────────────────────────────────────────────────────
-export async function upload(req, res) {
-  if (!req.file) {
-    return res.status(400).json({ detail: "No file provided" });
+// ── POST /api/files/upload/initiate ───────────────────────────────────────────
+export async function initiateUpload(req, res) {
+  const { fileName, mimeType, parentFolderId } = req.body;
+  let { accountIndex } = req.body;
+
+  if (accountIndex === undefined || accountIndex === null) {
+    accountIndex = await pickBestAccount();
   }
 
-  const bestIndex = await pickBestAccount();
-  if (bestIndex === null) {
-    return res.status(503).json({ detail: "No connected Drive accounts with available space" });
+  if (accountIndex === null) {
+    return res.status(503).json({ detail: "No connected Drive accounts available" });
   }
 
-  const account = await DriveAccount.findOne({ accountIndex: bestIndex });
+  const account = await DriveAccount.findOne({ accountIndex });
+  if (!account) return res.status(404).json({ detail: "Account not found" });
 
-  // BUG FIX: removed require("mime-types") which crashes in ES modules.
-  // req.file.mimetype is always set by multer; fallback to octet-stream.
-  const mimeType = req.file.mimetype || "application/octet-stream";
-  const parentFolderId = req.body.parent_folder_id || null;
+  try {
+    const oauth2Client = getOAuth2Client(account);
+    const { token } = await oauth2Client.getAccessToken();
 
-  const result = await uploadFile(
-    account,
-    req.file.buffer,
-    req.file.originalname,
-    mimeType,
-    parentFolderId
-  );
+    const metadata = { name: fileName };
+    if (parentFolderId) metadata.parents = [parentFolderId];
 
-  const dbFile = await File.create({
-    fileName: req.file.originalname,
-    driveFileId: result.driveFileId,
-    accountIndex: bestIndex,
-    size: result.size,
-    mimeType: result.mimeType,
-    thumbnailLink: result.thumbnailLink || null,
-    parentDriveFileId: result.parentDriveFileId || null,
-  });
+    const response = await fetch(
+      "https://www.googleapis.com/upload/drive/v3/files?uploadType=resumable",
+      {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json; charset=UTF-8",
+          // Pass the origin of the client to enable CORS for the subsequent PUT request
+          "Origin": req.get("origin"),
+          "X-Upload-Content-Type": mimeType || "application/octet-stream",
+        },
+        body: JSON.stringify(metadata),
+      }
+    );
 
-  return res.status(201).json(fileToDict(dbFile));
+    if (!response.ok) {
+      const errText = await response.text();
+      throw new Error(`Google Drive API error: ${errText}`);
+    }
+
+    const sessionUrl = response.headers.get("location");
+    return res.json({ sessionUrl, accountIndex });
+  } catch (err) {
+    console.error("[Upload] Error initiating session:", err.message);
+    return res.status(500).json({ detail: err.message });
+  }
+}
+
+// ── POST /api/files/upload/finalize ───────────────────────────────────────────
+export async function finalizeUpload(req, res) {
+  const { driveFileId, accountIndex } = req.body;
+  const account = await DriveAccount.findOne({ accountIndex });
+  if (!account) return res.status(404).json({ detail: "Account not found" });
+
+  try {
+    const drive = buildService(account);
+    let result = await drive.files.get({
+      fileId: driveFileId,
+      fields: "id,name,size,mimeType,thumbnailLink,parents,createdTime",
+    });
+
+    // Google often takes 1-3 seconds to generate a thumbnail link after upload.
+    // If it's missing, we wait 2 seconds and retry once.
+    if (!result.data.thumbnailLink && result.data.mimeType?.startsWith("image/")) {
+       await new Promise(resolve => setTimeout(resolve, 2000));
+       result = await drive.files.get({
+         fileId: driveFileId,
+         fields: "id,name,size,mimeType,thumbnailLink,parents,createdTime",
+       });
+    }
+
+    const data = result.data;
+    const dbFile = await File.findOneAndUpdate(
+      { driveFileId: data.id, accountIndex },
+      {
+        $set: {
+          fileName: data.name,
+          size: parseInt(data.size || "0", 10),
+          mimeType: data.mimeType,
+          thumbnailLink: data.thumbnailLink || null,
+          parentDriveFileId: data.parents?.[0] || null,
+          createdAt: new Date(data.createdTime),
+        },
+      },
+      { upsert: true, new: true }
+    );
+
+    return res.json(fileToDict(dbFile));
+  } catch (err) {
+    console.error("[Upload] Error finalizing:", err.message);
+    return res.status(500).json({ detail: err.message });
+  }
 }
 
 // ── GET /api/files/:fileId/thumbnail ─────────────────────────────────────────

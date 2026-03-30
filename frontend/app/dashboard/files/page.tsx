@@ -8,6 +8,7 @@ import { markStatsDirty } from "@/hooks/useStats";
 import { GridCard, ListRow } from "@/components/files/FileCards";
 import { PreviewModal } from "@/components/files/PreviewModal";
 import { FolderDropPanel } from "@/components/files/FolderDropPanel";
+import MoveToAccountModal from "@/components/files/MoveToAccountModal";
 
 type TypeFilter = "all" | "folder" | "image" | "video" | "audio" | "pdf" | "doc" | "sheet" | "archive";
 type SortKey = "date-desc" | "date-asc" | "name-asc" | "name-desc" | "size-desc" | "size-asc";
@@ -31,6 +32,7 @@ export default function FilesPage() {
   const [previewFile, setPreviewFile] = useState<FileItem | null>(null);
   const [selectionMode, setSelectionMode] = useState(false);
   const [selectedItems, setSelectedItems] = useState<Set<string>>(new Set());
+  const [moveToAccountFile, setMoveToAccountFile] = useState<FileItem | null>(null);
 
   function handleToggleSelect(id: string) {
     setSelectedItems(prev => {
@@ -298,6 +300,14 @@ export default function FilesPage() {
 
       {previewFile && (
         <PreviewModal file={previewFile} onClose={() => setPreviewFile(null)} />
+      )}
+
+      {moveToAccountFile && (
+        <MoveToAccountModal
+          file={moveToAccountFile}
+          onClose={() => setMoveToAccountFile(null)}
+          onSuccess={() => { refreshFiles(); refreshStorage(); markStatsDirty(); }}
+        />
       )}
 
       {shareModal && (
@@ -629,6 +639,7 @@ export default function FilesPage() {
               onDragStartFile={handleDragStartFile}
               onShare={handleShare}
               onPreview={setPreviewFile}
+              onMoveToAccount={setMoveToAccountFile}
               selectionMode={selectionMode}
               selected={selectedItems.has(file.id)}
               onSelectMode={() => {
@@ -667,6 +678,7 @@ export default function FilesPage() {
                     onDragStartFile={handleDragStartFile}
                     onShare={handleShare}
                     onPreview={setPreviewFile}
+                    onMoveToAccount={setMoveToAccountFile}
                     selectionMode={selectionMode}
                     selected={selectedItems.has(file.id)}
                     onSelectMode={() => {

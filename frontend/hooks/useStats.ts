@@ -89,46 +89,53 @@ export function computeStats(files: RawFile[], accounts: RawAccount[]): CachedSt
   const sizeByType: Record<string, number> = {};
   const filesByAccount: Record<string, number> = {};
   let totalFolders = 0;
+  let totalSize = 0;
 
-  for (const f of files) {
-    const cat = getMimeCategory(f.mime_type);
-    const isFolder = f.mime_type === "application/vnd.google-apps.folder";
-    filesByType[cat] = (filesByType[cat] ?? 0) + 1;
-    sizeByType[cat] = (sizeByType[cat] ?? 0) + (f.size || 0);
-    if (isFolder) {
-      totalFolders++;
-    } else {
-      const key = `#${f.account_index}`;
-      filesByAccount[key] = (filesByAccount[key] ?? 0) + 1;
-    }
-  }
-
-  // Weekly uploads (last 8 weeks) — folders excluded
-  const weeklyMap: Record<string, number> = {};
   const now = new Date();
+  const weeklyMap: Record<string, number> = {};
+  
+  // Initialize weekly map labels
   for (let i = 7; i >= 0; i--) {
     const d = new Date(now);
     d.setDate(d.getDate() - i * 7);
     const label = d.toLocaleDateString("en-US", { month: "short", day: "numeric" });
     weeklyMap[label] = 0;
   }
+
+  // Single pass calculation
   for (const f of files) {
-    if (f.mime_type === "application/vnd.google-apps.folder") continue;
-    const created = new Date(f.created_at);
-    const weeksAgo = Math.floor((now.getTime() - created.getTime()) / (7 * 24 * 60 * 60 * 1000));
-    if (weeksAgo <= 7) {
-      const d = new Date(now);
-      d.setDate(d.getDate() - weeksAgo * 7);
-      const label = d.toLocaleDateString("en-US", { month: "short", day: "numeric" });
-      if (weeklyMap[label] !== undefined) weeklyMap[label]++;
+    const isFolder = f.mime_type === "application/vnd.google-apps.folder";
+    const size = f.size || 0;
+    totalSize += size;
+
+    if (isFolder) {
+      totalFolders++;
+    } else {
+      const cat = getMimeCategory(f.mime_type);
+      filesByType[cat] = (filesByType[cat] ?? 0) + 1;
+      sizeByType[cat] = (sizeByType[cat] ?? 0) + size;
+
+      const key = `#${f.account_index}`;
+      filesByAccount[key] = (filesByAccount[key] ?? 0) + 1;
+
+      // Weekly uploads check
+      const created = new Date(f.created_at);
+      const weeksAgo = Math.floor((now.getTime() - created.getTime()) / (7 * 24 * 60 * 60 * 1000));
+      if (weeksAgo <= 7) {
+        const d = new Date(now);
+        d.setDate(d.getDate() - weeksAgo * 7);
+        const label = d.toLocaleDateString("en-US", { month: "short", day: "numeric" });
+        if (weeklyMap[label] !== undefined) weeklyMap[label]++;
+      }
     }
   }
+
   const weeklyUploads = Object.entries(weeklyMap).map(([date, count]) => ({ date, count }));
 
   return {
     totalFiles: files.length - totalFolders,
     totalFolders,
-    totalSize: files.reduce((s, f) => s + (f.size || 0), 0),
+    totalSize,
     filesByType,
     sizeByType,
     filesByAccount,

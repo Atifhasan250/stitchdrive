@@ -30,7 +30,7 @@ function loadClientConfig() {
 // so the first real Drive API call doesn't pay the token exchange round-trip.
 const _oauth2Cache = new Map(); // accountIndex → oauth2Client
 
-function getOAuth2Client(account) {
+export function getOAuth2Client(account) {
   const cached = _oauth2Cache.get(account.accountIndex);
   if (cached) return cached;
   const clientConfig = loadClientConfig();
@@ -327,9 +327,35 @@ export async function trashDriveFile(account, driveFileId) {
 
 export async function restoreFile(account, driveFileId) {
   const drive = buildService(account);
+  // 1. Tell Google Drive to restore the file
   await retryOnRateLimit(() =>
     drive.files.update({ fileId: driveFileId, requestBody: { trashed: false } })
   );
+
+  // 2. Fetch the metadata to sync to our DB immediately (so it shows up in "Files" list)
+  try {
+    const result = await drive.files.get({
+      fileId: driveFileId,
+      fields: "id,name,size,mimeType,thumbnailLink,parents,createdTime",
+    });
+    const df = result.data;
+    await File.findOneAndUpdate(
+      { driveFileId, accountIndex: account.accountIndex },
+      {
+        $set: {
+          fileName: df.name || "",
+          size: parseInt(df.size || "0", 10),
+          mimeType: df.mimeType || null,
+          thumbnailLink: df.thumbnailLink || null,
+          parentDriveFileId: df.parents?.[0] || null,
+          createdAt: new Date(df.createdTime),
+        },
+      },
+      { upsert: true }
+    );
+  } catch (err) {
+    console.warn(`[Restore] Metadata sync failed for ${driveFileId}:`, err.message);
+  }
 }
 
 // ── Trash listing ─────────────────────────────────────────────────────────────

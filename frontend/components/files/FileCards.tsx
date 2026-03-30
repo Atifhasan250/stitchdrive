@@ -17,6 +17,7 @@ export function ActionsMenu({
   onDelete,
   onShare,
   onPreview,
+  onMoveToAccount,
   onSelectMode,
   inFolder,
   onMoveToRoot,
@@ -27,6 +28,7 @@ export function ActionsMenu({
   onDelete: () => void;
   onShare: () => void;
   onPreview: () => void;
+  onMoveToAccount: () => void;
   onSelectMode?: () => void;
   inFolder?: boolean;
   onMoveToRoot?: () => void;
@@ -130,6 +132,15 @@ export function ActionsMenu({
             </svg>
             Locate in Drive
           </button>
+          <button
+            onClick={() => { onMoveToAccount(); setOpen(false); }}
+            className="flex w-full items-center gap-3 px-4 py-2 text-xs font-medium text-sd-text2 transition hover:bg-sd-hover hover:text-sd-text"
+          >
+            <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M7.5 21 3 16.5m0 0L7.5 12M3 16.5h13.5m0-13.5L21 7.5m0 0L16.5 12M21 7.5H7.5" />
+            </svg>
+            Move to Account
+          </button>
           {inFolder && onMoveToRoot && (
             <button
               onClick={() => { onMoveToRoot(); setOpen(false); }}
@@ -171,6 +182,7 @@ export function GridCard({
   onPreview,
   selectionMode,
   selected,
+  onMoveToAccount,
   onSelectMode,
   onToggleSelect,
 }: {
@@ -185,6 +197,7 @@ export function GridCard({
   onDragStartFile?: (file: FileItem) => void;
   onShare: (file: FileItem) => void;
   onPreview: (file: FileItem) => void;
+  onMoveToAccount: (file: FileItem) => void;
   selectionMode?: boolean;
   selected?: boolean;
   onSelectMode?: () => void;
@@ -348,7 +361,7 @@ export function GridCard({
           <p className="mt-1 font-mono text-[10px] text-sd-text3">{isFolder ? "Folder" : formatBytes(file.size)}</p>
         </div>
         {!selectionMode && (
-          <ActionsMenu file={file} onRename={() => setEditing(true)} onDownload={handleDownload} onDelete={handleDelete} onShare={() => onShare(file)} onPreview={() => onPreview(file)} inFolder={inFolder} onMoveToRoot={onMoveToRoot} onSelectMode={onSelectMode} />
+          <ActionsMenu file={file} onRename={() => setEditing(true)} onDownload={handleDownload} onDelete={handleDelete} onShare={() => onShare(file)} onPreview={() => onPreview(file)} onMoveToAccount={() => onMoveToAccount(file)} inFolder={inFolder} onMoveToRoot={onMoveToRoot} onSelectMode={onSelectMode} />
         )}
       </div>
     </div>
@@ -367,6 +380,7 @@ export function ListRow({
   onDragStartFile,
   onShare,
   onPreview,
+  onMoveToAccount,
   onSelectMode,
   selectionMode,
   selected,
@@ -383,6 +397,7 @@ export function ListRow({
   onDragStartFile?: (file: FileItem) => void;
   onShare: (file: FileItem) => void;
   onPreview: (file: FileItem) => void;
+  onMoveToAccount: (file: FileItem) => void;
   onSelectMode?: () => void;
   selectionMode?: boolean;
   selected?: boolean;
@@ -525,7 +540,7 @@ export function ListRow({
       <td className="hidden px-5 py-3.5 text-xs font-medium text-sd-text3 md:table-cell">{new Date(file.created_at).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })}</td>
       <td className="px-5 py-3.5 text-right">
         <div className="flex justify-end pr-2">
-          <ActionsMenu file={file} onRename={() => setEditing(true)} onDownload={handleDownload} onDelete={handleDelete} onShare={() => onShare(file)} onPreview={() => onPreview(file)} inFolder={inFolder} onMoveToRoot={onMoveToRoot} onSelectMode={onSelectMode} />
+          <ActionsMenu file={file} onRename={() => setEditing(true)} onDownload={handleDownload} onDelete={handleDelete} onShare={() => onShare(file)} onPreview={() => onPreview(file)} onMoveToAccount={() => onMoveToAccount(file)} inFolder={inFolder} onMoveToRoot={onMoveToRoot} onSelectMode={onSelectMode} />
         </div>
       </td>
     </tr>

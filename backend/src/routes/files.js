@@ -1,10 +1,8 @@
 import { Router } from "express";
-import multer from "multer";
 import { requireAuth } from "../middlewares/auth.js";
 import {
   syncFiles,
   listFiles,
-  upload,
   getDownload,
   getView,
   rename,
@@ -13,6 +11,8 @@ import {
   unshareFileRoute,
   deleteFile,
   getThumbnail,
+  initiateUpload,
+  finalizeUpload,
   downloadSharedFile,
   listSharedChildren,
   deleteSharedFile,
@@ -23,13 +23,6 @@ import {
 } from "../controllers/filesController.js";
 
 const router = Router();
-
-// BUG FIX: added 500MB file size limit — without this a large upload buffers
-// entirely in RAM and can crash the Node process
-const memUpload = multer({
-  storage: multer.memoryStorage(),
-  limits: { fileSize: 500 * 1024 * 1024 }, // 500 MB
-});
 
 // ── Static paths first (must come before /:fileId routes) ────────────────────
 router.post("/sync", requireAuth, syncFiles);
@@ -47,7 +40,8 @@ router.delete("/trash/:accountIndex/:driveFileId", requireAuth, deleteTrashFile)
 
 // ── Core file routes ──────────────────────────────────────────────────────────
 router.get("/", requireAuth, listFiles);
-router.post("/upload", requireAuth, memUpload.single("file"), upload);
+router.post("/upload/initiate", requireAuth, initiateUpload);
+router.post("/upload/finalize", requireAuth, finalizeUpload);
 router.get("/:fileId/download", requireAuth, getDownload);
 router.get("/:fileId/view", requireAuth, getView);
 router.get("/:fileId/thumbnail", requireAuth, getThumbnail);

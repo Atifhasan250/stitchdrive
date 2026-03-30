@@ -7,7 +7,7 @@ type Toast = { id: number; message: string; type: "loading" | "success" | "error
 type ConfirmState = { message: string; description?: string; confirmLabel: string; danger: boolean; onConfirm: () => void };
 
 interface UploadCtx {
-  upload: (file: File, parentFolderDriveId?: string | null) => void;
+  upload: (file: File | Blob, parentFolderDriveId?: string | null, targetAccountIndex?: number | null) => void;
   addCompleteListener: (fn: () => void) => () => void;
   setCurrentFolder: (folderId: string | null, folderName?: string | null) => void;
   toast: (message: string, type: "loading" | "success" | "error") => number;
@@ -75,43 +75,94 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
     });
   }
 
-  const upload = useCallback((file: File, parentFolderDriveId?: string | null) => {
+  const upload = useCallback(async (file: File | Blob, parentFolderDriveId?: string | null, targetAccountIndex?: number | null) => {
     const id = ++idRef.current;
+    const fileName = (file as File).name || "blob-file-" + id;
+    const fileType = (file as File).type || "application/octet-stream";
     
     // Auto maximize manager if it was minimized upon new upload
     setIsManagerMinimized(false);
     
-    setSnacks((s) => [...s, { id, name: file.name, progress: 0, status: "uploading" }]);
+    setSnacks((s) => [...s, { id, name: fileName, progress: 0, status: "uploading" }]);
 
-    const xhr = new XMLHttpRequest();
-    const form = new FormData();
-    form.append("file", file);
-    const parentId = parentFolderDriveId !== undefined ? parentFolderDriveId : currentFolderRef.current;
-    if (parentId) form.append("parent_folder_id", parentId);
+    try {
+      const parentId = parentFolderDriveId !== undefined ? parentFolderDriveId : currentFolderRef.current;
+      
+      // Step 1: Initiate upload session with backend
+      const initRes = await fetch("/api/files/upload/initiate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          fileName,
+          mimeType: fileType,
+          parentFolderId: parentId,
+          accountIndex: targetAccountIndex,
+        }),
+      });
 
-    xhr.upload.onprogress = (e) => {
-      if (e.lengthComputable) {
-        const pct = Math.round((e.loaded / e.total) * 100);
-        setSnacks((s) => s.map((sn) => (sn.id === id ? { ...sn, progress: pct } : sn)));
+      if (!initRes.ok) {
+        const errorData = await initRes.json().catch(() => ({ detail: "Unknown initiation error" }));
+        throw new Error(errorData.detail || "Failed to initiate upload session");
       }
-    };
+      const { sessionUrl, accountIndex } = await initRes.json();
 
-    xhr.onload = () => {
-      if (xhr.status >= 200 && xhr.status < 300) {
-        setSnacks((s) => s.map((sn) => (sn.id === id ? { ...sn, status: "done", progress: 100 } : sn)));
-        listeners.current.forEach((fn) => fn());
-      } else {
+      // Step 2: Upload directly to Google via the Session URI
+      const xhr = new XMLHttpRequest();
+      xhr.open("PUT", sessionUrl);
+      
+      // IMPORTANT: Set content type to match initiation declaration
+      xhr.setRequestHeader("Content-Type", fileType);
+      
+      xhr.upload.onprogress = (e) => {
+        if (e.lengthComputable) {
+          const pct = Math.round((e.loaded / e.total) * 100);
+          setSnacks((s) => s.map((sn) => (sn.id === id ? { ...sn, progress: pct } : sn)));
+        }
+      };
+
+      xhr.onload = async () => {
+        console.log(`[Upload] Progress: HTTP ${xhr.status} for "${fileName}"`);
+        if (xhr.status >= 200 && xhr.status < 300) {
+          try {
+            const responseData = JSON.parse(xhr.responseText || "{}");
+            const driveFileId = responseData.id;
+
+            if (!driveFileId) throw new Error("No Drive ID returned from Google");
+
+            // Step 3: Finalize metadata in our DB
+            const finalRes = await fetch("/api/files/upload/finalize", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ driveFileId, accountIndex }),
+            });
+
+            if (finalRes.ok) {
+              setSnacks((s) => s.map((sn) => (sn.id === id ? { ...sn, status: "done", progress: 100 } : sn)));
+              listeners.current.forEach((fn) => fn());
+            } else {
+              const err = await finalRes.json().catch(() => ({}));
+              throw new Error(err.detail || "Finalization failed");
+            }
+          } catch (parseErr: any) {
+             console.error("[Upload] Finalization parsing error:", parseErr);
+             setSnacks((s) => s.map((sn) => (sn.id === id ? { ...sn, status: "error" } : sn)));
+          }
+        } else {
+          console.error(`[Upload] Google API error ${xhr.status}:`, xhr.responseText);
+          setSnacks((s) => s.map((sn) => (sn.id === id ? { ...sn, status: "error" } : sn)));
+        }
+      };
+
+      xhr.onerror = () => {
+        console.error("[Upload] Network or CORS error during PUT to Google");
         setSnacks((s) => s.map((sn) => (sn.id === id ? { ...sn, status: "error" } : sn)));
-      }
-    };
+      };
 
-    xhr.onerror = () => {
+      xhr.send(file);
+    } catch (err: any) {
+      console.error("[Upload] Critical Error:", err.message);
       setSnacks((s) => s.map((sn) => (sn.id === id ? { ...sn, status: "error" } : sn)));
-    };
-
-    xhr.open("POST", "/api/files/upload");
-    xhr.withCredentials = true;
-    xhr.send(form);
+    }
   }, []);
 
   useEffect(() => {

@@ -30,8 +30,6 @@ export function useFiles() {
 
   useEffect(() => {
     refreshFiles();
-    const t = setInterval(refreshFiles, 4000);
-    return () => clearInterval(t);
   }, [refreshFiles]);
 
   return { files, refreshFiles };

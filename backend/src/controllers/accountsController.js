@@ -4,6 +4,7 @@ import {
   getAllQuotas,
   invalidateOAuth2Cache,
   invalidateQuotaCache,
+  getOAuth2Client,
 } from "../services/driveService.js";
 
 // ── GET /api/accounts ─────────────────────────────────────────────────────────
@@ -72,4 +73,26 @@ export async function disconnectAccount(req, res) {
   }
 
   return res.json({ ok: true });
+}
+
+// ── GET /api/accounts/:accountIndex/token ────────────────────────────────────
+export async function getAccessToken(req, res) {
+  const accountIndex = parseInt(req.params.accountIndex, 10);
+  if (isNaN(accountIndex)) {
+    return res.status(400).json({ detail: "Invalid account index" });
+  }
+
+  const account = await DriveAccount.findOne({ accountIndex });
+  if (!account || !account.isConnected) {
+    return res.status(404).json({ detail: "Account not found or not connected" });
+  }
+
+  try {
+    const oauth2Client = getOAuth2Client(account);
+    const { token } = await oauth2Client.getAccessToken();
+    return res.json({ accessToken: token });
+  } catch (err) {
+    console.error("[Account] Error getting token:", err.message);
+    return res.status(500).json({ detail: err.message });
+  }
 }
