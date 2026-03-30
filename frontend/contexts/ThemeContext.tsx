@@ -10,24 +10,29 @@ const ThemeContext = createContext<{ theme: Theme; toggle: () => void }>({
 });
 
 export function ThemeProvider({ children }: { children: React.ReactNode }) {
+  const [mounted, setMounted] = useState(false);
   const [theme, setTheme] = useState<Theme>("dark");
 
   useEffect(() => {
-    const stored = localStorage.getItem("dp_theme") as Theme | null;
-    const preferred = window.matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark";
-    const initial = stored ?? preferred;
-    setTheme(initial);
-    document.documentElement.classList.toggle("light", initial === "light");
+    setMounted(true);
+    const isLight = document.documentElement.classList.contains("light");
+    setTheme(isLight ? "light" : "dark");
   }, []);
 
   function toggle() {
+    if (!mounted) return;
     setTheme((t) => {
       const next = t === "dark" ? "light" : "dark";
-      localStorage.setItem("dp_theme", next);
+      localStorage.setItem("sd_theme", next);
       document.documentElement.classList.toggle("light", next === "light");
       return next;
     });
   }
+
+  // Prevent hydration mismatch: render a placeholder or nothing until mounted if needed,
+  // but for theme we actually want the children to render immediately.
+  // The suppressHydrationWarning on root html handles the class mismatch.
+
 
   return (
     <ThemeContext.Provider value={{ theme, toggle }}>

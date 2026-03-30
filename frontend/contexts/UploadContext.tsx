@@ -29,6 +29,8 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
   const [toasts, setToasts] = useState<Toast[]>([]);
   const [confirmState, setConfirmState] = useState<ConfirmState | null>(null);
   const [dragging, setDragging] = useState(false);
+  const [isManagerMinimized, setIsManagerMinimized] = useState(false);
+  
   const idRef = useRef(0);
   const listeners = useRef<Set<() => void>>(new Set());
   const dragCounter = useRef(0);
@@ -75,6 +77,10 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
 
   const upload = useCallback((file: File, parentFolderDriveId?: string | null) => {
     const id = ++idRef.current;
+    
+    // Auto maximize manager if it was minimized upon new upload
+    setIsManagerMinimized(false);
+    
     setSnacks((s) => [...s, { id, name: file.name, progress: 0, status: "uploading" }]);
 
     const xhr = new XMLHttpRequest();
@@ -94,16 +100,13 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
       if (xhr.status >= 200 && xhr.status < 300) {
         setSnacks((s) => s.map((sn) => (sn.id === id ? { ...sn, status: "done", progress: 100 } : sn)));
         listeners.current.forEach((fn) => fn());
-        setTimeout(() => setSnacks((s) => s.filter((sn) => sn.id !== id)), 3000);
       } else {
         setSnacks((s) => s.map((sn) => (sn.id === id ? { ...sn, status: "error" } : sn)));
-        setTimeout(() => setSnacks((s) => s.filter((sn) => sn.id !== id)), 5000);
       }
     };
 
     xhr.onerror = () => {
       setSnacks((s) => s.map((sn) => (sn.id === id ? { ...sn, status: "error" } : sn)));
-      setTimeout(() => setSnacks((s) => s.filter((sn) => sn.id !== id)), 5000);
     };
 
     xhr.open("POST", "/api/files/upload");
@@ -113,21 +116,29 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     function onDragEnter(e: DragEvent) {
-      if (e.dataTransfer?.types.includes("application/x-drivecloud-file-id")) return;
+      const types = Array.from(e.dataTransfer?.types || []);
+      if (!types.includes("Files")) return;
       e.preventDefault();
       dragCounter.current++;
       if (dragCounter.current === 1) setDragging(true);
     }
-    function onDragLeave() {
+    function onDragLeave(e: DragEvent) {
+      const types = Array.from(e.dataTransfer?.types || []);
+      if (!types.includes("Files")) return;
       dragCounter.current--;
-      if (dragCounter.current === 0) setDragging(false);
+      if (dragCounter.current <= 0) {
+        dragCounter.current = 0;
+        setDragging(false);
+      }
     }
     function onDragOver(e: DragEvent) {
-      if (e.dataTransfer?.types.includes("application/x-drivecloud-file-id")) return;
+      const types = Array.from(e.dataTransfer?.types || []);
+      if (!types.includes("Files")) return;
       e.preventDefault();
     }
     function onDrop(e: DragEvent) {
-      if (e.dataTransfer?.types.includes("application/x-drivecloud-file-id")) return;
+      const types = Array.from(e.dataTransfer?.types || []);
+      if (!types.includes("Files")) return;
       e.preventDefault();
       dragCounter.current = 0;
       setDragging(false);
@@ -136,6 +147,7 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
 
     window.addEventListener("dragenter", onDragEnter);
     window.addEventListener("dragleave", onDragLeave);
+
     window.addEventListener("dragover", onDragOver);
     window.addEventListener("drop", onDrop);
     return () => {
@@ -146,22 +158,30 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
     };
   }, [upload]);
 
+  // Derived state for the upload manager widget
+  const showManager = snacks.length > 0;
+  const activeUploads = snacks.filter(s => s.status === "uploading").length;
+  const completedUploads = snacks.filter(s => s.status === "done").length;
+  const failedUploads = snacks.filter(s => s.status === "error").length;
+
   return (
     <UploadContext.Provider value={{ upload, addCompleteListener, setCurrentFolder, toast, updateToast, confirm }}>
       {children}
 
-      {/* Drag-to-upload overlay */}
+      {/* Drop overlay */}
       {dragging && (
-        <div className="pointer-events-none fixed inset-0 z-50 flex items-center justify-center bg-dp-bg/80 backdrop-blur-sm">
-          <div className="flex flex-col items-center gap-4 rounded-2xl border-2 border-dashed border-orange-500/60 bg-dp-s1/80 px-16 py-12">
-            <div className="flex h-16 w-16 items-center justify-center rounded-2xl border border-orange-500/20 bg-orange-500/10">
-              <svg className="h-8 w-8 text-orange-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+        <div className="pointer-events-none fixed inset-0 z-50 flex items-center justify-center bg-sd-bg/85 backdrop-blur-sm transition-all duration-300">
+          <div className="flex flex-col items-center gap-4 rounded-[2rem] border-2 border-dashed border-sd-accent/50 bg-sd-s1/80 px-24 py-16 shadow-2xl animate-fade-up">
+            <div className="flex h-20 w-20 items-center justify-center rounded-3xl border border-sd-accent/20 bg-sd-accent/10 shadow-glow">
+              <svg className="h-10 w-10 text-sd-accent animate-float" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
                 <path strokeLinecap="round" strokeLinejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5m-13.5-9L12 3m0 0 4.5 4.5M12 3v13.5" />
               </svg>
             </div>
             <div className="text-center">
-              <p className="text-lg font-semibold text-dp-text">Drop to upload</p>
-              <p className="mt-1 text-sm text-dp-text2">Files will be uploaded to your Drive pool</p>
+              <p className="text-2xl font-bold text-sd-text">Drop files to upload</p>
+              <p className="mt-2 text-base font-medium text-sd-text2 max-w-sm">
+                Files will be securely uploaded to your {currentFolderNameRef.current ? `"${currentFolderNameRef.current}"` : "root"} folder.
+              </p>
             </div>
           </div>
         </div>
@@ -170,30 +190,31 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
       {/* Confirm dialog */}
       {confirmState && (
         <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm"
+          className="fixed inset-0 z-[100] flex items-center justify-center bg-black/70 backdrop-blur-sm"
           onClick={() => setConfirmState(null)}
         >
           <div
-            className="w-full max-w-sm rounded-2xl border border-dp-border bg-dp-s1 p-6 shadow-2xl"
+            className="relative w-full max-w-md rounded-2xl border border-sd-border bg-sd-s1 p-6 shadow-2xl animate-fade-up-d1"
             onClick={(e) => e.stopPropagation()}
           >
-            <p className="text-sm font-semibold text-dp-text">{confirmState.message}</p>
+            <div className="absolute top-0 left-6 right-6 h-px bg-gradient-to-r from-transparent via-sd-border2 to-transparent" />
+            <p className="text-lg font-bold text-sd-text">{confirmState.message}</p>
             {confirmState.description && (
-              <p className="mt-1.5 text-xs text-dp-text3">{confirmState.description}</p>
+              <p className="mt-2 text-sm text-sd-text3">{confirmState.description}</p>
             )}
-            <div className="mt-5 flex justify-end gap-2">
+            <div className="mt-6 flex justify-end gap-3">
               <button
                 onClick={() => setConfirmState(null)}
-                className="rounded-lg border border-dp-border px-4 py-2 text-xs text-dp-text2 transition hover:bg-dp-hover"
+                className="rounded-xl border border-sd-border bg-sd-bg px-5 py-2 text-sm font-semibold text-sd-text2 hover:bg-sd-hover hover:text-sd-text transition"
               >
                 Cancel
               </button>
               <button
                 onClick={() => { const fn = confirmState.onConfirm; setConfirmState(null); fn(); }}
-                className={`rounded-lg px-4 py-2 text-xs font-medium transition ${
+                className={`rounded-xl px-5 py-2 text-sm font-bold shadow-sm transition ${
                   confirmState.danger
-                    ? "bg-red-500/10 border border-red-500/30 text-red-400 hover:bg-red-500/20"
-                    : "bg-orange-500 text-white hover:bg-orange-400"
+                    ? "bg-red-500 hover:bg-red-600 text-white shadow-red-500/20"
+                    : "btn-primary"
                 }`}
               >
                 {confirmState.confirmLabel}
@@ -203,76 +224,147 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
         </div>
       )}
 
-      {/* Status toasts + upload snacks */}
-      <div className="fixed bottom-4 right-4 z-50 flex flex-col gap-2" style={{ maxWidth: "320px" }}>
+      {/* Toast notifications (excluding file uploads) */}
+      <div className="fixed bottom-6 top-auto md:top-6 md:bottom-auto right-4 md:right-6 z-[90] flex flex-col gap-3 pointer-events-none w-full max-w-[320px]">
         {toasts.map((t) => (
           <div
             key={t.id}
-            className={`flex items-center gap-3 rounded-xl border px-4 py-3 shadow-xl ${
-              t.type === "success"
-                ? "border-emerald-500/30 bg-dp-s1"
-                : t.type === "error"
-                ? "border-red-500/30 bg-dp-s1"
-                : "border-dp-border bg-dp-s1"
+            className={`pointer-events-auto flex items-center gap-3 rounded-xl border px-4 py-3 shadow-lg backdrop-blur-md animate-slide-in-right ${
+              t.type === "success" ? "border-emerald-500/30 bg-sd-s1/95"
+              : t.type === "error"   ? "border-red-500/30 bg-sd-s1/95"
+              : "border-sd-border bg-sd-s1/95"
             }`}
           >
             {t.type === "loading" ? (
-              <div className="h-5 w-5 flex-shrink-0 animate-spin rounded-full border-2 border-dp-border border-t-orange-500" />
+              <svg className="h-5 w-5 flex-shrink-0 animate-spin text-sd-accent" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                 <path strokeLinecap="round" strokeLinejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0 3.181 3.183a8.25 8.25 0 0013.803-3.7M4.031 9.865a8.25 8.25 0 0113.803-3.7l3.181 3.182m0-4.991v4.99" />
+              </svg>
             ) : t.type === "success" ? (
-              <div className="flex h-5 w-5 flex-shrink-0 items-center justify-center rounded-full bg-emerald-500/20">
-                <svg className="h-3 w-3 text-emerald-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}>
+              <div className="flex h-6 w-6 flex-shrink-0 items-center justify-center rounded-full bg-emerald-500/20 border border-emerald-500/30">
+                <svg className="h-4 w-4 text-emerald-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}>
                   <path strokeLinecap="round" strokeLinejoin="round" d="m4.5 12.75 6 6 9-13.5" />
                 </svg>
               </div>
             ) : (
-              <div className="flex h-5 w-5 flex-shrink-0 items-center justify-center rounded-full bg-red-500/20">
-                <svg className="h-3 w-3 text-red-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}>
+              <div className="flex h-6 w-6 flex-shrink-0 items-center justify-center rounded-full bg-red-500/20 border border-red-500/30">
+                <svg className="h-4 w-4 text-red-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}>
                   <path strokeLinecap="round" strokeLinejoin="round" d="M6 18 18 6M6 6l12 12" />
                 </svg>
               </div>
             )}
-            <p className="text-xs font-medium text-dp-text">{t.message}</p>
-          </div>
-        ))}
-
-        {snacks.map((snack) => (
-          <div
-            key={snack.id}
-            className="flex items-center gap-3 rounded-xl border border-dp-border bg-dp-s1 px-4 py-3 shadow-xl"
-          >
-            {snack.status === "uploading" ? (
-              <div className="h-5 w-5 flex-shrink-0 animate-spin rounded-full border-2 border-dp-border border-t-orange-500" />
-            ) : snack.status === "done" ? (
-              <div className="flex h-5 w-5 flex-shrink-0 items-center justify-center rounded-full bg-emerald-500/20">
-                <svg className="h-3 w-3 text-emerald-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}>
-                  <path strokeLinecap="round" strokeLinejoin="round" d="m4.5 12.75 6 6 9-13.5" />
-                </svg>
-              </div>
-            ) : (
-              <div className="flex h-5 w-5 flex-shrink-0 items-center justify-center rounded-full bg-red-500/20">
-                <svg className="h-3 w-3 text-red-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}>
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M6 18 18 6M6 6l12 12" />
-                </svg>
-              </div>
-            )}
-            <div className="min-w-0 flex-1">
-              <p className="truncate text-xs font-medium text-dp-text">{snack.name}</p>
-              {snack.status === "uploading" ? (
-                <div className="mt-1.5 h-1 w-full overflow-hidden rounded-full bg-dp-border">
-                  <div
-                    className="h-full rounded-full bg-orange-500 transition-all duration-300"
-                    style={{ width: `${snack.progress}%` }}
-                  />
-                </div>
-              ) : (
-                <p className="mt-0.5 text-[10px] text-dp-text3">
-                  {snack.status === "done" ? "Upload complete" : "Upload failed"}
-                </p>
-              )}
-            </div>
+            <p className="text-sm font-medium text-sd-text flex-1">{t.message}</p>
           </div>
         ))}
       </div>
+
+      {/* Persistent Upload Manager Widget */}
+      {showManager && (
+        <div 
+          className="fixed bottom-0 right-4 md:right-8 z-[80] transition-all duration-500 ease-in-out w-full max-w-[360px] animate-fade-in"
+          style={{ 
+            transform: isManagerMinimized ? 'translateY(calc(100% - 48px))' : 'translateY(0)',
+          }}
+        >
+          <div className="flex flex-col w-full rounded-t-2xl bg-sd-s1 border border-b-0 border-sd-border shadow-[0_-8px_40px_rgba(0,0,0,0.4)] overflow-hidden">
+            {/* Header */}
+            <div 
+              className="group flex items-center justify-between px-4 py-3 bg-sd-bg/80 backdrop-blur-md border-b border-sd-border cursor-pointer hover:bg-sd-hover transition-colors"
+              onClick={() => setIsManagerMinimized(!isManagerMinimized)}
+            >
+              <div className="flex items-center gap-3">
+                {activeUploads > 0 ? (
+                  <svg className="h-4 w-4 animate-spin text-sd-accent" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                     <path strokeLinecap="round" strokeLinejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0 3.181 3.183a8.25 8.25 0 0013.803-3.7M4.031 9.865a8.25 8.25 0 0113.803-3.7l3.181 3.182m0-4.991v4.99" />
+                  </svg>
+                ) : failedUploads > 0 ? (
+                  <div className="h-5 w-5 flex items-center justify-center rounded-full bg-red-500/20 text-red-400 border border-red-500/30">
+                    <svg className="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+                    </svg>
+                  </div>
+                ) : (
+                  <div className="h-5 w-5 flex items-center justify-center rounded-full bg-emerald-500/20 text-emerald-400 border border-emerald-500/30">
+                    <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3.5}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="m4.5 12.75 6 6 9-13.5" />
+                    </svg>
+                  </div>
+                )}
+                <span className="text-sm font-semibold text-sd-text">
+                  {activeUploads > 0 
+                    ? `Uploading ${activeUploads} ${activeUploads === 1 ? 'item' : 'items'}` 
+                    : `${completedUploads} ${completedUploads === 1 ? 'upload' : 'uploads'} complete`}
+                </span>
+              </div>
+              <div className="flex items-center gap-1.5" onClick={(e) => e.stopPropagation()}>
+                <button 
+                  className={`flex h-8 w-8 items-center justify-center rounded-xl bg-sd-s2/40 text-sd-text3 transition hover:bg-sd-s2 hover:text-sd-text ${isManagerMinimized ? "rotate-180" : ""}`}
+                  onClick={() => setIsManagerMinimized(!isManagerMinimized)}
+                  title={isManagerMinimized ? "Expand" : "Minimize"}
+                >
+                  <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="m19.5 8.25-7.5 7.5-7.5-7.5" />
+                  </svg>
+                </button>
+                <button 
+                  className="h-8 w-8 flex items-center justify-center rounded-xl hover:bg-rose-500/10 text-sd-text3 hover:text-rose-400 transition"
+                  onClick={() => setSnacks([])}
+                  title="Close"
+                >
+                  <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M6 18 18 6M6 6l12 12" />
+                  </svg>
+                </button>
+              </div>
+            </div>
+
+            {/* List */}
+            <div className="max-h-[350px] overflow-y-auto bg-sd-s1">
+              {snacks.map((snack) => (
+                <div key={snack.id} className="flex items-center gap-3 px-4 py-3 border-b border-sd-border/50 last:border-0 hover:bg-sd-s2/30 transition">
+                  <div className="flex-shrink-0">
+                    {snack.status === "uploading" ? (
+                      <svg className="h-5 w-5 text-sd-text3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M19.5 14.25v-2.625a3.375 3.375 0 0 0-3.375-3.375h-1.5A1.125 1.125 0 0 1 13.5 7.125v-1.5a3.375 3.375 0 0 0-3.375-3.375H8.25m3.75 9v6m3-3H9m1.5-12H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 0 0-9-9Z" />
+                      </svg>
+                    ) : snack.status === "done" ? (
+                      <div className="h-5 w-5 rounded bg-emerald-500/10 flex items-center justify-center border border-emerald-500/20">
+                        <svg className="h-3.5 w-3.5 text-emerald-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}>
+                          <path strokeLinecap="round" strokeLinejoin="round" d="m4.5 12.75 6 6 9-13.5" />
+                        </svg>
+                      </div>
+                    ) : (
+                      <div className="h-5 w-5 rounded bg-red-500/10 flex items-center justify-center border border-red-500/20">
+                        <svg className="h-3.5 w-3.5 text-red-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                          <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+                        </svg>
+                      </div>
+                    )}
+                  </div>
+                  <div className="min-w-0 flex-1 flex flex-col justify-center">
+                    <p className="truncate text-xs font-medium text-sd-text" title={snack.name}>{snack.name}</p>
+                    {snack.status === "uploading" ? (
+                      <div className="mt-1.5 flex items-center gap-2">
+                        <div className="h-1 w-full overflow-hidden rounded-full bg-sd-border relative">
+                          <div
+                            className="absolute top-0 bottom-0 left-0 bg-blue-500 transition-all duration-300 ease-out shadow-[0_0_8px_rgba(59,130,246,0.8)]"
+                            style={{ width: `${snack.progress}%` }}
+                          />
+                        </div>
+                        <span className="text-[10px] font-mono text-sd-text3">{snack.progress}%</span>
+                      </div>
+                    ) : (
+                      <p className={`mt-0.5 text-[10px] ${snack.status === 'done' ? 'text-emerald-400' : 'text-red-400'}`}>
+                        {snack.status === "done" ? "Upload complete" : "Upload failed"}
+                      </p>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
+
     </UploadContext.Provider>
   );
 }

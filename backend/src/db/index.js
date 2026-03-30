@@ -1,6 +1,5 @@
 import mongoose from "mongoose";
-
-const MONGO_URI = process.env.MONGO_URI;
+import { MONGO_URI } from "../config/index.js";
 
 let isConnected = false;
 

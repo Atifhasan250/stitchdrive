@@ -31,6 +31,7 @@ app.use(morgan(IS_PROD ? "combined" : "dev"));
 const allowedOrigins = [
   ...new Set([
     "http://localhost:3000",
+    "http://192.168.137.1:3000",
     "https://atifs-drive.vercel.app",
     FRONTEND_URL,
   ].filter(Boolean)),

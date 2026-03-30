@@ -6,6 +6,7 @@ const profileSchema = new mongoose.Schema(
     bio: { type: String, default: null },
     avatarDriveFileId: { type: String, default: null },
     avatarAccountIndex: { type: Number, default: null },
+    avatarMimeType: { type: String, default: null },
   },
   { collection: "profile", timestamps: false }
 );

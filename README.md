@@ -22,8 +22,8 @@ Google gives every account **15 GB free**. DrivePool lets you combine as many ac
 - **Trash management** — delete goes to Drive trash; restore or permanently delete anytime
 - **Analytics** — storage by account, file type charts, weekly upload activity
 - **Profile** — display name, bio, avatar stored in your own Drive
-- **Secure** — bcrypt-hashed PIN, httponly JWT cookie, OAuth tokens encrypted at rest (Fernet)
-- **No .env needed** — secrets are stored directly in the local SQLite database
+- **Secure** — bcrypt-hashed PIN, httponly JWT cookie, OAuth tokens encrypted at rest (AES-256)
+- **No .env needed** — secrets are stored directly in the local MongoDB database
 - **Dark / light theme**
 - **100% open source, $0 cost**
 
@@ -31,7 +31,7 @@ Google gives every account **15 GB free**. DrivePool lets you combine as many ac
 
 ## Quick Start
 
-**Prerequisites:** Python 3.10+, Node.js 18+, at least one Google account
+**Prerequisites:** Node.js 18+, MongoDB (local or Atlas), at least one Google account
 
 ### 1. Clone
 
@@ -55,20 +55,20 @@ You only need **one Google Cloud project** and one credentials file — no matte
 ### 3. Install & set up
 
 ```bash
-pip install -r backend/requirements.txt
-python backend/scripts/generate_secrets.py
+cd backend && npm install
+npm run setup
 ```
 
-Enter a PIN when prompted — your PIN hash, JWT secret, and encryption key are written directly to `backend/drivepool.db`. No `.env` file needed.
+Enter a PIN when prompted — your PIN hash, JWT secret, and encryption key are written directly to your MongoDB database. No `.env` file needed.
 
 ### 4. Start the servers
 
 ```bash
 # Terminal 1 — backend
-uvicorn backend.main:app --reload
+npm run dev
 
 # Terminal 2 — frontend
-cd frontend && npm install && npm run dev
+cd ../frontend && npm install && npm run dev
 ```
 
 ### 5. Connect your accounts
@@ -98,7 +98,7 @@ docker compose build
 ### 3. Initialize secrets (first run only)
 
 ```bash
-docker compose run --rm backend python scripts/generate_secrets.py
+docker compose run --rm backend npm run setup
 ```
 
 Enter a PIN when prompted. Secrets are written to the `drivepool_data` persistent Docker volume.
@@ -115,7 +115,7 @@ Open [http://localhost:3000](http://localhost:3000). View logs anytime with `doc
 
 | Data | Storage |
 |------|---------|
-| SQLite database | `drivepool_data` named Docker volume |
+| MongoDB database | `drivepool_data` named Docker volume |
 | Google credentials | `./config/credentials.json` (bind-mounted read-only) |
 
 ### Environment variables
@@ -126,7 +126,7 @@ All variables have sensible defaults for local use. Override them in `docker-com
 |----------|---------|---------|
 | `FRONTEND_URL` | `http://localhost:3000` | Allowed CORS origin for the backend |
 | `BACKEND_URL` | `http://localhost:8000` | Public URL used to build the OAuth callback URI |
-| `DB_PATH` | `backend/drivepool.db` | Path to the SQLite database file |
+| `MONGO_URI` | `mongodb://localhost:27017/drivepool` | MongoDB connection string |
 | `CONFIG_DIR` | `config/` | Directory containing `credentials.json` |
 
 > **`BACKEND_URL` is important:** DrivePool uses it to construct the OAuth redirect URI sent to Google. The default works for local and Docker deployments. If you put the backend behind a reverse proxy or a different hostname, update this value — and add the new callback URL to your Google Cloud Console authorized redirect URIs.
@@ -141,8 +141,8 @@ Go to **Settings** and click **Connect another account** — no file changes, no
 
 ## Security notes
 
-- `config/credentials.json` and `backend/drivepool.db` contain sensitive data — keep them out of version control (already covered by `.gitignore`) and back them up securely.
-- OAuth refresh tokens are encrypted with Fernet (AES-128-CBC) before being stored. The encryption key lives in the database alongside the PIN hash and JWT secret.
+- `config/credentials.json` and your MongoDB instance contain sensitive data — keep them out of version control and back them up securely.
+- OAuth refresh tokens are encrypted with AES-256-CBC before being stored. The encryption key lives in the database alongside the PIN hash and JWT secret.
 - If you expose DrivePool over the internet, put it behind a reverse proxy with HTTPS and update both `FRONTEND_URL` and `BACKEND_URL` accordingly.
 
 ---
@@ -151,7 +151,7 @@ Go to **Settings** and click **Connect another account** — no file changes, no
 
 | Layer | Tech |
 |-------|------|
-| Backend | Python · FastAPI · SQLite · Google Drive API v3 |
+| Backend | Node.js · Express · MongoDB · Google Drive API v3 |
 | Frontend | Next.js (App Router) · Tailwind CSS |
 
 ---

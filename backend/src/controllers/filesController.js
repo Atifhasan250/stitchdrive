@@ -109,13 +109,23 @@ export async function getDownload(req, res) {
     return res.status(503).json({ detail: "Account not connected" });
   }
 
-  res.setHeader("Content-Disposition", `attachment; filename="${file.fileName}"`);
+  const safeName = encodeURIComponent(file.fileName).replace(/'/g, "%27").replace(/\(/g, "%28").replace(/\)/g, "%29");
+  res.setHeader("Content-Disposition", `attachment; filename="${file.fileName.replace(/"/g, '\\"')}"; filename*=UTF-8''${safeName}`);
   res.setHeader("Content-Type", file.mimeType || "application/octet-stream");
 
-  for await (const chunk of streamFile(account, file.driveFileId)) {
-    res.write(chunk);
+  try {
+    for await (const chunk of streamFile(account, file.driveFileId)) {
+      res.write(chunk);
+    }
+    res.end();
+  } catch (err) {
+    console.error(`[DownloadStream] Error streaming file ${file.driveFileId}:`, err.message);
+    if (!res.headersSent) {
+      res.status(500).json({ detail: "Error streaming file" });
+    } else {
+      res.destroy();
+    }
   }
-  res.end();
 }
 
 // ── GET /api/files/:fileId/view ───────────────────────────────────────────────
@@ -131,13 +141,23 @@ export async function getView(req, res) {
     return res.status(503).json({ detail: "Account not connected" });
   }
 
-  res.setHeader("Content-Disposition", `inline; filename="${file.fileName}"`);
+  const safeName = encodeURIComponent(file.fileName).replace(/'/g, "%27").replace(/\(/g, "%28").replace(/\)/g, "%29");
+  res.setHeader("Content-Disposition", `inline; filename="${file.fileName.replace(/"/g, '\\"')}"; filename*=UTF-8''${safeName}`);
   res.setHeader("Content-Type", file.mimeType || "application/octet-stream");
 
-  for await (const chunk of streamFile(account, file.driveFileId)) {
-    res.write(chunk);
+  try {
+    for await (const chunk of streamFile(account, file.driveFileId)) {
+      res.write(chunk);
+    }
+    res.end();
+  } catch (err) {
+    console.error(`[ViewStream] Error streaming file ${file.driveFileId}:`, err.message);
+    if (!res.headersSent) {
+      res.status(500).json({ detail: "Error streaming file" });
+    } else {
+      res.destroy();
+    }
   }
-  res.end();
 }
 
 // ── PATCH /api/files/:fileId/rename ──────────────────────────────────────────
@@ -269,13 +289,23 @@ export async function downloadSharedFile(req, res) {
     return res.status(503).json({ detail: "Account not connected" });
   }
 
-  res.setHeader("Content-Disposition", `attachment; filename="${driveFileId}"`);
+  const safeName = encodeURIComponent(driveFileId).replace(/'/g, "%27").replace(/\(/g, "%28").replace(/\)/g, "%29");
+  res.setHeader("Content-Disposition", `attachment; filename="${driveFileId.replace(/"/g, '\\"')}"; filename*=UTF-8''${safeName}`);
   res.setHeader("Content-Type", "application/octet-stream");
 
-  for await (const chunk of streamFile(account, driveFileId)) {
-    res.write(chunk);
+  try {
+    for await (const chunk of streamFile(account, driveFileId)) {
+      res.write(chunk);
+    }
+    res.end();
+  } catch (err) {
+    console.error(`[SharedStream] Error streaming file ${driveFileId}:`, err.message);
+    if (!res.headersSent) {
+      res.status(500).json({ detail: "Error streaming file" });
+    } else {
+      res.destroy();
+    }
   }
-  res.end();
 }
 
 // ── GET /api/files/shared/:accountIndex/:folderId/children ────────────────────

@@ -27,13 +27,8 @@ export function encryptToken(plaintext) {
   const iv = crypto.randomBytes(16);
   const nowSecs = Math.floor(Date.now() / 1000);
 
-  // Pad plaintext to 16-byte boundary (PKCS7)
-  const data = Buffer.from(plaintext, "utf8");
-  const padLen = 16 - (data.length % 16);
-  const padded = Buffer.concat([data, Buffer.alloc(padLen, padLen)]);
-
   const cipher = crypto.createCipheriv("aes-128-cbc", encryptionKey, iv);
-  const ciphertext = Buffer.concat([cipher.update(padded), cipher.final()]);
+  const ciphertext = Buffer.concat([cipher.update(plaintext, "utf8"), cipher.final()]);
 
   // Build the to-sign payload: version + timestamp + iv + ciphertext
   const version = Buffer.from([0x80]);
@@ -66,11 +61,8 @@ export function decryptToken(fernetToken) {
   const ciphertext = raw.slice(25, hmacStart);
 
   const decipher = crypto.createDecipheriv("aes-128-cbc", encryptionKey, iv);
-  const padded = Buffer.concat([decipher.update(ciphertext), decipher.final()]);
-
-  // Strip PKCS7 padding
-  const padLen = padded[padded.length - 1];
-  return padded.slice(0, padded.length - padLen).toString("utf8");
+  const decrypted = Buffer.concat([decipher.update(ciphertext), decipher.final()]);
+  return decrypted.toString("utf8");
 }
 
 // ── PIN helpers ───────────────────────────────────────────────────────────────

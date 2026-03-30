@@ -3,8 +3,8 @@
 // Cached stats hook — only re-fetches when files change (upload/delete/sync)
 // Uses localStorage to persist stats between page loads
 
-const CACHE_KEY = "dp_stats_v1";
-const DIRTY_KEY = "dp_stats_dirty";
+const CACHE_KEY = "sd_stats_v1";
+const DIRTY_KEY = "sd_stats_dirty";
 const STALE_MS = 10 * 60 * 1000; // 10 minutes
 
 export type CachedStats = {

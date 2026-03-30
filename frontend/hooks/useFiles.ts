@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 
 export type FileItem = {
-  id: number;
+  id: string;
   file_name: string;
   drive_file_id: string;
   account_index: number;
@@ -30,8 +30,8 @@ export function useFiles() {
 
   useEffect(() => {
     refreshFiles();
-    const t = setTimeout(refreshFiles, 4000);
-    return () => clearTimeout(t);
+    const t = setInterval(refreshFiles, 4000);
+    return () => clearInterval(t);
   }, [refreshFiles]);
 
   return { files, refreshFiles };

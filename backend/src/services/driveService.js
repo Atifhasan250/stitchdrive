@@ -91,6 +91,11 @@ export function invalidateQuotaCache(accountIndex) {
   else _quotaCache.clear();
 }
 
+/** Sanitize an ID for use in an unparameterized 'q' string to prevent injection */
+function sanitizeId(id) {
+  return id?.replace(/'/g, "");
+}
+
 // ── Rate-limit retry ──────────────────────────────────────────────────────────
 
 async function retryOnRateLimit(fn) {
@@ -424,9 +429,10 @@ export async function listSharedFolderChildren(account, folderId) {
   const drive = buildService(account);
   const items = [];
   let pageToken = null;
+  const safeId = sanitizeId(folderId);
   do {
     const params = {
-      q: `'${folderId}' in parents and trashed = false`,
+      q: `'${safeId}' in parents and trashed = false`,
       pageSize: 1000,
       fields: "nextPageToken, files(id, name, size, mimeType, createdTime, owners)",
     };
@@ -502,7 +508,8 @@ export async function removeSharedFile(account, driveFileId) {
 
 export async function getOrCreateProfileFolder(account) {
   const drive = buildService(account);
-  const query = `name='${PROFILE_FOLDER_NAME}' and mimeType='application/vnd.google-apps.folder' and trashed=false`;
+  const safeName = PROFILE_FOLDER_NAME.replace(/'/g, "");
+  const query = `name='${safeName}' and mimeType='application/vnd.google-apps.folder' and trashed=false`;
   const result = await retryOnRateLimit(() =>
     drive.files.list({ q: query, fields: "files(id)" })
   );
@@ -550,8 +557,7 @@ function parseDriveTime(s) {
 
 export async function syncFilesFromDrives() {
   const accounts = await DriveAccount.find({ isConnected: true }).lean();
-  let total = 0;
-  for (const account of accounts) {
+  await Promise.allSettled(accounts.map(async (account) => {
     try {
       const driveFiles = await listAllFiles(account);
       const driveIds = new Set(driveFiles.map((f) => f.id));
@@ -585,11 +591,9 @@ export async function syncFilesFromDrives() {
         await File.bulkWrite(ops, { ordered: false });
       }
 
-      total += driveFiles.length;
       invalidateQuotaCache(account.accountIndex);
     } catch (err) {
       console.error(`[Sync] Error syncing account ${account.accountIndex}:`, err.message);
     }
-  }
-  return total;
+  }));
 }

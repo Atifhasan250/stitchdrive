@@ -55,6 +55,7 @@ export async function uploadAvatar(req, res) {
   const profile = await getOrCreateProfile();
   profile.avatarDriveFileId = result.driveFileId;
   profile.avatarAccountIndex = account.accountIndex;
+  profile.avatarMimeType = mimeType;
   await profile.save();
 
   return res.json({ ok: true });
@@ -75,6 +76,6 @@ export async function getAvatar(req, res) {
   }
 
   const content = await downloadFile(account, profile.avatarDriveFileId);
-  res.setHeader("Content-Type", "image/jpeg");
+  res.setHeader("Content-Type", profile.avatarMimeType || "image/jpeg");
   return res.send(content);
 }

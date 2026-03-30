@@ -2,6 +2,8 @@
 
 import { useState } from "react";
 import { useStorage } from "@/hooks/useStorage";
+import { useUpload } from "@/contexts/UploadContext";
+import Link from "next/link";
 
 function formatBytes(bytes: number): string {
   if (bytes >= 1e9) return (bytes / 1e9).toFixed(1) + " GB";
@@ -11,15 +13,23 @@ function formatBytes(bytes: number): string {
 
 export default function SettingsPage() {
   const { accounts, refreshStorage } = useStorage();
+  const { confirm } = useUpload();
   const [connecting, setConnecting] = useState(false);
 
   const totalUsed = accounts.reduce((s, a) => s + a.used, 0);
   const totalLimit = accounts.reduce((s, a) => s + a.limit, 0);
   const connectedCount = accounts.filter((a) => a.is_connected).length;
 
-  async function handleDisconnect(index: number) {
-    await fetch(`/api/accounts/${index}`, { method: "DELETE", credentials: "include" });
-    refreshStorage();
+  async function handleAction(index: number, isConnected: boolean) {
+    const confirmMsg = isConnected ? "Disconnect Account" : "Remove Account Entry";
+    const body = isConnected 
+      ? "You will lose access to files on this account until you reconnect. Local file records for this account will be deleted from StitchDrive."
+      : "Permanently remove this account slot from your dashboard? You can add it back anytime.";
+    
+    confirm(confirmMsg, async () => {
+      await fetch(`/api/accounts/${index}`, { method: "DELETE", credentials: "include" });
+      refreshStorage();
+    }, { description: body, confirmLabel: isConnected ? "Disconnect" : "Remove", danger: true });
   }
 
   async function handleConnect(index: number) {
@@ -37,118 +47,131 @@ export default function SettingsPage() {
   }
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-6 animate-fade-up">
       {/* Header */}
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
-          <h1 className="text-xl font-semibold text-dp-text">Settings</h1>
-          <p className="mt-1 text-sm text-dp-text2">
-            {connectedCount} of {accounts.length} accounts connected
+          <h1 className="font-display text-2xl text-sd-text">Settings</h1>
+          <p className="mt-1 flex items-center gap-2 text-sm font-medium text-sd-text2">
+            <span className="flex h-5 items-center justify-center rounded-md bg-sd-s2 px-2 pb-[1px] text-[11px] font-bold text-sd-text">{connectedCount} / {accounts.length}</span>
+            accounts connected
           </p>
         </div>
         <button
           onClick={handleConnectNew}
           disabled={connecting}
-          className="flex items-center gap-1.5 rounded-lg bg-orange-500 px-3 py-2 text-xs font-medium text-white transition hover:bg-orange-400 disabled:opacity-60"
+          className="btn-primary flex items-center gap-2 rounded-xl px-4 py-2.5 text-xs font-semibold disabled:opacity-60"
         >
           {connecting ? (
-            <svg className="h-3.5 w-3.5 animate-spin" fill="none" viewBox="0 0 24 24">
+            <svg className="h-4 w-4 animate-spin" fill="none" viewBox="0 0 24 24">
               <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
               <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4l3-3-3-3v4a8 8 0 00-8 8h4z" />
             </svg>
           ) : (
-            <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+            <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
               <path strokeLinecap="round" strokeLinejoin="round" d="M12 4.5v15m7.5-7.5h-15" />
             </svg>
           )}
-          {connecting ? "Redirecting…" : "Connect another account"}
+          {connecting ? "Redirecting…" : "Connect Account"}
         </button>
       </div>
 
       {/* Storage pool overview */}
-      <div className="rounded-xl border border-dp-border bg-dp-s1 p-5">
-        <div className="mb-4 flex items-end justify-between">
-          <div>
-            <p className="text-xs font-medium uppercase tracking-wider text-dp-text3">Total Storage Pool</p>
-            <p className="mt-1 text-3xl font-semibold text-dp-text">{formatBytes(totalLimit)}</p>
-          </div>
-          <div className="text-right">
-            <p className="text-sm text-dp-text2">{formatBytes(totalUsed)} used</p>
-            <p className="text-sm text-dp-text3">{formatBytes(Math.max(0, totalLimit - totalUsed))} free</p>
-          </div>
-        </div>
-        <div className="h-2.5 w-full overflow-hidden rounded-full bg-dp-hover">
-          <div
-            className="h-full rounded-full bg-orange-500 transition-all duration-700"
-            style={{ width: `${totalLimit > 0 ? Math.min(100, (totalUsed / totalLimit) * 100) : 0}%` }}
-          />
-        </div>
-        <div className="mt-4 flex flex-wrap gap-2">
-          {accounts.filter((a) => a.is_connected).map((a) => (
-            <div key={a.account_index} className="flex items-center gap-2 rounded-lg border border-dp-border bg-dp-bg px-3 py-1.5">
-              <span className="h-2 w-2 rounded-full bg-orange-500/80" />
-              <span className="text-xs text-dp-text2">{a.email ?? `Account ${a.account_index}`}</span>
-              <span className="text-xs text-dp-text3">{formatBytes(a.used)}</span>
+      <div className="stat-card relative overflow-hidden rounded-2xl p-6 shadow-sm">
+        <div className="absolute top-0 right-0 h-40 w-40 rounded-full bg-blue-500/10 blur-3xl pointer-events-none" />
+        <div className="absolute inset-0 bg-gradient-to-br from-sd-bg/60 to-sd-s1 z-0 pointer-events-none" />
+        
+        <div className="relative z-10">
+          <div className="mb-5 flex items-end justify-between">
+            <div>
+              <p className="text-[10px] font-bold uppercase tracking-widest text-sd-text3 mb-1">Total Storage Pool</p>
+              <p className="font-display text-3xl tracking-tight text-sd-text">{formatBytes(totalLimit)}</p>
             </div>
-          ))}
+            <div className="text-right">
+              <p className="text-sm font-medium text-sd-text">{formatBytes(totalUsed)} used</p>
+              <p className="text-xs font-medium text-sd-text3">{formatBytes(Math.max(0, totalLimit - totalUsed))} free</p>
+            </div>
+          </div>
+          <div className="h-3 w-full overflow-hidden rounded-full bg-sd-s2 shadow-inner">
+            <div
+              className="progress-bar h-full rounded-full transition-all duration-700 shadow-glow-sm"
+              style={{ width: `${totalLimit > 0 ? Math.min(100, (totalUsed / totalLimit) * 100) : 0}%` }}
+            />
+          </div>
+          <div className="mt-5 flex flex-wrap gap-2.5">
+            {accounts.filter((a) => a.is_connected).map((a, i) => {
+              const borderColors = ["border-blue-500/30", "border-indigo-500/30", "border-violet-500/30", "border-emerald-500/30", "border-teal-500/30"];
+              const dotColors = ["bg-blue-500", "bg-indigo-500", "bg-violet-500", "bg-emerald-500", "bg-teal-500"];
+              const colorIdx = i % dotColors.length;
+              return (
+                <div key={a.account_index} className={`flex items-center gap-2 rounded-lg border ${borderColors[colorIdx]} bg-sd-s1 px-3 py-1.5 shadow-sm`}>
+                  <span className={`h-1.5 w-1.5 rounded-full ${dotColors[colorIdx]} shadow-[0_0_8px_currentColor]`} />
+                  <span className="text-xs font-medium text-sd-text2">{a.email ?? `Account ${a.account_index}`}</span>
+                  <span className="text-xs font-mono text-sd-text3">{formatBytes(a.used)}</span>
+                </div>
+              );
+            })}
+          </div>
         </div>
       </div>
 
       {/* Drive accounts section */}
       <div>
-        <h2 className="mb-3 text-sm font-medium text-dp-text">Google Drive Accounts</h2>
+        <h2 className="mb-4 text-sm font-semibold tracking-wide text-sd-text uppercase">Google Drive Accounts</h2>
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
           {accounts.map((account) => {
             const pct = account.limit > 0 ? Math.min(100, (account.used / account.limit) * 100) : 0;
             return (
               <div
                 key={account.account_index}
-                className={`rounded-xl border p-5 transition ${
+                className={`stat-card flex flex-col justify-between rounded-2xl p-5 transition-colors ${
                   account.is_connected
-                    ? "border-dp-border bg-dp-s1"
-                    : "border-dp-border/50 bg-dp-s1 opacity-60"
+                    ? "border-sd-border bg-sd-s1"
+                    : "border-sd-border/50 bg-sd-bg opacity-75 grayscale-[0.2]"
                 }`}
               >
-                <div className="mb-4 flex items-start justify-between gap-2">
-                  <div className="min-w-0">
-                    <p className="truncate text-sm font-medium text-dp-text">
-                      {account.email ?? `Account ${account.account_index}`}
-                    </p>
-                    <div className="mt-1 flex items-center gap-1.5">
-                      <span className={`inline-block h-1.5 w-1.5 rounded-full ${account.is_connected ? "bg-emerald-400" : "bg-dp-text3"}`} />
-                      <span className={`text-xs ${account.is_connected ? "text-emerald-400" : "text-dp-text3"}`}>
-                        {account.is_connected ? "Connected" : "Disconnected"}
-                      </span>
+                <div>
+                  <div className="mb-5 flex items-start justify-between gap-2">
+                    <div className="min-w-0">
+                      <p className="truncate text-sm font-semibold text-sd-text">
+                        {account.email ?? `Account ${account.account_index}`}
+                      </p>
+                      <div className="mt-1.5 flex items-center gap-1.5">
+                        <span className={`inline-block h-2 w-2 rounded-full shadow-[0_0_8px_currentColor] ${account.is_connected ? "bg-emerald-400 text-emerald-400" : "bg-sd-text3 text-sd-text3"}`} />
+                        <span className={`text-xs font-medium ${account.is_connected ? "text-emerald-400" : "text-sd-text3"}`}>
+                          {account.is_connected ? "Connected" : "Disconnected"}
+                        </span>
+                      </div>
                     </div>
+                    <span className="flex flex-shrink-0 items-center justify-center rounded-lg border border-sd-border bg-sd-s2 px-2.5 py-1 text-[10px] font-bold text-sd-text3">
+                      #{account.account_index}
+                    </span>
                   </div>
-                  <span className="flex-shrink-0 rounded-md border border-dp-border px-2 py-0.5 text-[10px] font-medium text-dp-text3">
-                    #{account.account_index}
-                  </span>
-                </div>
 
-                {account.is_connected && (
-                  <div className="mb-4 space-y-1.5">
-                    <div className="flex justify-between text-xs text-dp-text3">
-                      <span>{formatBytes(account.used)} used</span>
-                      <span>{pct.toFixed(0)}%</span>
+                  {account.is_connected && (
+                    <div className="mb-5 space-y-2">
+                      <div className="flex justify-between text-[11px] font-medium text-sd-text2">
+                        <span>{formatBytes(account.used)} used</span>
+                        <span className={pct > 90 ? "text-rose-400" : ""}>{pct.toFixed(0)}%</span>
+                      </div>
+                      <div className="h-1.5 w-full overflow-hidden rounded-full bg-sd-s2">
+                        <div
+                          className={`h-full rounded-full transition-all shadow-glow-sm ${pct > 90 ? "bg-rose-500" : "bg-blue-500"}`}
+                          style={{ width: `${pct}%` }}
+                        />
+                      </div>
+                      <div className="flex justify-between text-[11px] font-medium text-sd-text3">
+                        <span>{formatBytes(account.free)} free</span>
+                        <span>of {formatBytes(account.limit)}</span>
+                      </div>
                     </div>
-                    <div className="h-1.5 w-full overflow-hidden rounded-full bg-dp-hover">
-                      <div
-                        className={`h-full rounded-full transition-all ${pct > 80 ? "bg-red-500" : "bg-orange-500"}`}
-                        style={{ width: `${pct}%` }}
-                      />
-                    </div>
-                    <div className="flex justify-between text-xs text-dp-text3">
-                      <span>{formatBytes(account.free)} free</span>
-                      <span>of {formatBytes(account.limit)}</span>
-                    </div>
-                  </div>
-                )}
+                  )}
+                </div>
 
                 {account.is_connected ? (
                   <button
-                    onClick={() => handleDisconnect(account.account_index)}
-                    className="w-full rounded-lg border border-dp-border py-2 text-xs text-dp-text2 transition hover:border-red-500/40 hover:text-red-400"
+                    onClick={() => handleAction(account.account_index, true)}
+                    className="w-full rounded-xl border border-sd-border bg-sd-bg py-2.5 text-xs font-semibold tracking-wide text-sd-text2 transition hover:border-rose-500/40 hover:bg-rose-500/5 hover:text-rose-400"
                   >
                     Disconnect
                   </button>
@@ -156,16 +179,16 @@ export default function SettingsPage() {
                   <div className="flex gap-2">
                     <button
                       onClick={() => handleConnect(account.account_index)}
-                      className="flex-1 rounded-lg bg-orange-500/10 py-2 text-xs font-medium text-orange-400 transition hover:bg-orange-500/20"
+                      className="flex-1 rounded-xl bg-blue-500/10 py-2.5 text-xs font-semibold tracking-wide text-blue-400 transition hover:bg-blue-500/20"
                     >
                       Connect
                     </button>
                     <button
-                      onClick={() => handleDisconnect(account.account_index)}
-                      className="rounded-lg border border-dp-border px-3 py-2 text-xs text-dp-text3 transition hover:border-red-500/40 hover:text-red-400"
+                      onClick={() => handleAction(account.account_index, false)}
+                      className="flex items-center justify-center rounded-xl border border-sd-border bg-sd-bg px-3.5 py-2.5 text-sd-text3 transition hover:border-rose-500/40 hover:bg-rose-500/5 hover:text-rose-400"
                       title="Remove account"
                     >
-                      <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                      <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                         <path strokeLinecap="round" strokeLinejoin="round" d="M6 18 18 6M6 6l12 12" />
                       </svg>
                     </button>
@@ -178,19 +201,20 @@ export default function SettingsPage() {
       </div>
 
       {/* About section */}
-      <div className="rounded-xl border border-dp-border bg-dp-s1 p-5">
-        <h2 className="mb-3 text-sm font-medium text-dp-text">About DrivePool</h2>
-        <p className="text-sm text-dp-text2 leading-relaxed">
-          DrivePool aggregates multiple Google Drive accounts into a unified storage pool. Files are automatically routed to the account with the most available space. All data is stored in your own Google Drive accounts — DrivePool never stores files on its own servers.
+      <div className="stat-card rounded-2xl p-6 relative overflow-hidden">
+        <div className="absolute top-0 left-0 bottom-0 w-1 bg-gradient-to-b from-blue-500 to-indigo-500" />
+        <h2 className="mb-3 text-sm font-semibold tracking-wide text-sd-text uppercase">About StitchDrive</h2>
+        <p className="text-sm font-medium text-sd-text2 leading-relaxed max-w-3xl">
+          StitchDrive aggregates multiple Google Drive accounts into a unified storage pool. Files are automatically routed to the account with the most available space. All data is stored in your own Google Drive accounts — StitchDrive never stores files on its own servers.
         </p>
-        <div className="mt-4 flex gap-3">
+        <div className="mt-5 flex gap-3">
           <a
-            href="https://github.com"
+            href="https://github.com/Atifhasan250/Stitch-Drive"
             target="_blank"
             rel="noopener noreferrer"
-            className="flex items-center gap-1.5 rounded-lg border border-dp-border px-3 py-2 text-xs text-dp-text2 transition hover:border-orange-500/30 hover:text-orange-400"
+            className="flex items-center gap-2 rounded-xl border border-sd-border bg-sd-bg px-4 py-2.5 text-xs font-semibold text-sd-text2 transition hover:border-sd-accent/40 hover:text-sd-text hover:bg-sd-s2"
           >
-            <svg className="h-3.5 w-3.5" fill="currentColor" viewBox="0 0 24 24">
+            <svg className="h-4 w-4" fill="currentColor" viewBox="0 0 24 24">
               <path d="M12 2C6.477 2 2 6.477 2 12c0 4.418 2.865 8.166 6.839 9.489.5.092.682-.217.682-.482 0-.237-.008-.866-.013-1.7-2.782.603-3.369-1.342-3.369-1.342-.454-1.155-1.11-1.462-1.11-1.462-.908-.62.069-.608.069-.608 1.003.07 1.531 1.03 1.531 1.03.892 1.529 2.341 1.087 2.91.832.092-.647.35-1.088.636-1.338-2.22-.253-4.555-1.11-4.555-4.943 0-1.091.39-1.984 1.029-2.683-.103-.253-.446-1.27.098-2.647 0 0 .84-.269 2.75 1.025A9.578 9.578 0 0112 6.836c.85.004 1.705.115 2.504.337 1.909-1.294 2.747-1.025 2.747-1.025.546 1.377.202 2.394.1 2.647.64.699 1.028 1.592 1.028 2.683 0 3.842-2.339 4.687-4.566 4.935.359.309.678.919.678 1.852 0 1.336-.012 2.415-.012 2.743 0 .267.18.578.688.48C19.138 20.163 22 16.418 22 12c0-5.523-4.477-10-10-10z" />
             </svg>
             View on GitHub

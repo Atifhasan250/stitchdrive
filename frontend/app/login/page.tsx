@@ -34,40 +34,53 @@ export default function LoginPage() {
   }
 
   return (
-    <main
-      className="flex min-h-screen items-center justify-center px-4"
-      style={{ background: "radial-gradient(ellipse at 50% 0%, rgba(139,92,246,0.12) 0%, var(--dp-bg) 60%)" }}
-    >
-      <div className="grid-bg pointer-events-none fixed inset-0 opacity-50" />
+    <main className="relative flex min-h-screen items-center justify-center overflow-hidden bg-sd-bg px-4">
+      {/* Background elements */}
+      <div className="dot-bg pointer-events-none absolute inset-0 opacity-40" />
+      <div className="pointer-events-none absolute inset-0">
+        <div className="absolute top-1/4 left-1/2 -translate-x-1/2 h-96 w-96 rounded-full bg-sd-accent/5 blur-3xl" />
+        <div className="absolute bottom-1/4 left-1/3 h-64 w-64 rounded-full bg-sd-accent2/5 blur-3xl" />
+      </div>
 
-      <div className="relative w-full max-w-sm">
-        <div className="absolute -inset-1 rounded-2xl bg-orange-500/10 blur-xl" />
-        <div className="relative rounded-2xl border border-dp-border bg-dp-s1 p-8 shadow-2xl">
+      <div className="relative w-full max-w-sm animate-fade-up">
+        {/* Outer glow */}
+        <div className="absolute -inset-px rounded-2xl bg-gradient-to-b from-sd-accent/20 to-transparent pointer-events-none" />
+
+        <div className="relative rounded-2xl border border-sd-border bg-sd-s1 p-8 shadow-card">
+          {/* Top accent line */}
+          <div className="absolute top-0 left-8 right-8 h-px bg-gradient-to-r from-transparent via-sd-accent/60 to-transparent" />
+
           <div className="mb-8 text-center">
-            <Link href="/" className="inline-flex items-center gap-2 mb-6">
-              <div className="flex h-9 w-9 items-center justify-center rounded-xl border border-orange-500/20 bg-orange-500/10">
-                <svg className="h-5 w-5 text-orange-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M12 16.5V9.75m0 0 3 3m-3-3-3 3M6.75 19.5a4.5 4.5 0 0 1-1.41-8.775 5.25 5.25 0 0 1 10.233-2.33 3 3 0 0 1 3.758 3.848A3.752 3.752 0 0 1 18 19.5H6.75Z" />
+            <Link href="/" className="inline-flex items-center gap-2.5 mb-6 group">
+              <div className="relative flex h-9 w-9 items-center justify-center rounded-xl overflow-hidden transition group-hover:scale-105">
+                <div className="absolute inset-0 bg-gradient-accent" />
+                <svg className="relative h-5 w-5 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                  <circle cx="9" cy="10" r="3.5" strokeLinecap="round" />
+                  <circle cx="15" cy="14" r="3.5" strokeLinecap="round" />
+                  <path d="M11.5 7.5 L12.5 16.5" strokeLinecap="round" strokeOpacity={0.5} />
                 </svg>
               </div>
-              <span className="text-sm font-semibold text-dp-text">DrivePool</span>
+              <span className="text-sm font-semibold tracking-tight text-sd-text">StitchDrive</span>
             </Link>
-            <h1 className="text-2xl font-semibold tracking-tight text-dp-text">Welcome back</h1>
-            <p className="mt-1.5 text-sm text-dp-text2">Enter your PIN to access the dashboard</p>
+
+            <h1 className="font-display text-2xl text-sd-text">Welcome back</h1>
+            <p className="mt-1.5 text-sm text-sd-text2">Enter your PIN to unlock your drive</p>
           </div>
 
           <form onSubmit={handleSubmit} className="space-y-4">
-            <input
-              type="password"
-              placeholder="••••••"
-              value={pin}
-              onChange={(e) => setPin(e.target.value)}
-              autoFocus
-              className="w-full rounded-xl border border-dp-border bg-dp-bg px-4 py-3 text-center text-xl tracking-[0.5em] text-dp-text placeholder-dp-text3 outline-none transition focus:border-orange-500/50 focus:ring-1 focus:ring-orange-500/30"
-            />
+            <div className="relative">
+              <input
+                type="password"
+                placeholder="••••••"
+                value={pin}
+                onChange={(e) => setPin(e.target.value)}
+                autoFocus
+                className="w-full rounded-xl border border-sd-border bg-sd-bg px-4 py-3.5 text-center text-xl tracking-[0.6em] text-sd-text placeholder-sd-text3 outline-none transition focus:border-sd-accent/50 focus:ring-2 focus:ring-sd-accent/10 font-mono"
+              />
+            </div>
 
             {error && (
-              <div className="flex items-center gap-2 rounded-lg border border-red-500/20 bg-red-500/5 px-3 py-2.5">
+              <div className="flex items-center gap-2 rounded-xl border border-red-500/20 bg-red-500/5 px-3.5 py-3">
                 <svg className="h-4 w-4 flex-shrink-0 text-red-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                   <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m9-.75a9 9 0 1 1-18 0 9 9 0 0 1 18 0Zm-9 3.75h.008v.008H12v-.008Z" />
                 </svg>
@@ -78,7 +91,7 @@ export default function LoginPage() {
             <button
               type="submit"
               disabled={loading || !pin}
-              className="w-full rounded-xl bg-orange-500 py-3 text-sm font-semibold text-white shadow-lg shadow-orange-500/20 transition hover:bg-orange-400 disabled:cursor-not-allowed disabled:opacity-40"
+              className="btn-primary w-full rounded-xl py-3.5 text-sm font-semibold disabled:cursor-not-allowed disabled:opacity-40"
             >
               {loading ? (
                 <span className="flex items-center justify-center gap-2">
@@ -91,6 +104,10 @@ export default function LoginPage() {
               ) : "Unlock Dashboard"}
             </button>
           </form>
+
+          <p className="mt-5 text-center text-xs text-sd-text3">
+            <Link href="/" className="hover:text-sd-text transition">← Back to home</Link>
+          </p>
         </div>
       </div>
     </main>

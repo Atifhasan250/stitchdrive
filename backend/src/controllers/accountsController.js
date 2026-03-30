@@ -50,15 +50,23 @@ export async function disconnectAccount(req, res) {
 
   const account = await DriveAccount.findOne({ accountIndex });
   if (account) {
+    // If already disconnected, this is a "Remove" request
+    if (!account.isConnected) {
+      await account.deleteOne();
+      invalidateOAuth2Cache(accountIndex);
+      invalidateQuotaCache(accountIndex);
+      return res.json({ ok: true, removed: true });
+    }
+
+    // Otherwise, this is a "Disconnect" request
     await File.deleteMany({ accountIndex });
     account.isConnected = false;
+    account.email = null;
     account.refreshToken = null;
     account.accessToken = null;
     account.tokenExpiry = null;
     await account.save();
 
-    // BUG FIX: clear cached OAuth2 client so a re-connect to a different
-    // Google account on the same index slot doesn't reuse the old token
     invalidateOAuth2Cache(accountIndex);
     invalidateQuotaCache(accountIndex);
   }
