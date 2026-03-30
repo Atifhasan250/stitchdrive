@@ -12,6 +12,7 @@ import {
   shareFileRoute,
   unshareFileRoute,
   deleteFile,
+  getThumbnail,
   downloadSharedFile,
   listSharedChildren,
   deleteSharedFile,
@@ -49,6 +50,7 @@ router.get("/", requireAuth, listFiles);
 router.post("/upload", requireAuth, memUpload.single("file"), upload);
 router.get("/:fileId/download", requireAuth, getDownload);
 router.get("/:fileId/view", requireAuth, getView);
+router.get("/:fileId/thumbnail", requireAuth, getThumbnail);
 router.patch("/:fileId/rename", requireAuth, rename);
 router.patch("/:fileId/move", requireAuth, moveFileRoute);
 router.post("/:fileId/share", requireAuth, shareFileRoute);

@@ -270,7 +270,7 @@ export function GridCard({
       }}
     >
       <div
-        className={`relative flex h-36 items-center justify-center overflow-hidden bg-sd-bg ${isFolder && !selectionMode ? "cursor-pointer" : ""}`}
+        className={`thumbnail-area relative flex h-36 items-center justify-center overflow-hidden bg-sd-bg ${isFolder && !selectionMode ? "cursor-pointer" : ""}`}
         onClick={(e) => {
           if (selectionMode && onToggleSelect) {
             e.stopPropagation();
@@ -293,8 +293,28 @@ export function GridCard({
           <span className="h-1 w-1 rounded-full bg-emerald-400 mr-1" />
           {file.account_index}
         </span>
-        <div className={`transform transition duration-300 ${!selectionMode ? "group-hover:-translate-y-1 group-hover:scale-105" : ""}`}>
-           <FileTypeIcon mimeType={file.mime_type} size={52} />
+        <div className={`thumbnail-area transform transition duration-300 ${!selectionMode ? "group-hover:-translate-y-1 group-hover:scale-105" : ""}`}>
+           {file.has_thumbnail ? (
+             <div className="relative h-28 w-28 overflow-hidden rounded-xl bg-sd-s1/50 shadow-inner group-hover:shadow-glow-sm transition-shadow duration-300">
+               <img
+                 src={`/api/files/${file.id}/thumbnail`}
+                 alt={file.file_name}
+                 draggable={false}
+                 className="h-full w-full object-cover select-none transition-opacity duration-500 opacity-0"
+                 onLoad={(e) => (e.currentTarget.style.opacity = "1")}
+                 onError={(e) => {
+                   e.currentTarget.style.display = "none";
+                   const fallback = e.currentTarget.parentElement?.nextElementSibling as HTMLElement;
+                   if (fallback) fallback.style.display = "flex";
+                 }}
+               />
+               <div className="absolute inset-0 flex hidden items-center justify-center">
+                 <FileTypeIcon mimeType={file.mime_type} size={52} />
+               </div>
+             </div>
+           ) : (
+             <FileTypeIcon mimeType={file.mime_type} size={52} />
+           )}
         </div>
       </div>
 
@@ -461,7 +481,7 @@ export function ListRow({
             </div>
           )}
           <div
-            className={`flex-shrink-0 transition-transform ${isFolder && !selectionMode ? "cursor-pointer group-hover:scale-105" : ""}`}
+            className={`thumbnail-area flex-shrink-0 transition-transform ${isFolder && !selectionMode ? "cursor-pointer group-hover:scale-105" : ""}`}
             onClick={(e) => {
               if (selectionMode && onToggleSelect) {
                 e.stopPropagation();

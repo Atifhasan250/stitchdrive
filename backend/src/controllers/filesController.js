@@ -1,4 +1,5 @@
 import mongoose from "mongoose";
+import fetch from "node-fetch";
 import DriveAccount from "../models/DriveAccount.js";
 import File from "../models/File.js";
 import {
@@ -94,6 +95,34 @@ export async function upload(req, res) {
   });
 
   return res.status(201).json(fileToDict(dbFile));
+}
+
+// ── GET /api/files/:fileId/thumbnail ─────────────────────────────────────────
+export async function getThumbnail(req, res) {
+  if (!isValidObjectId(req.params.fileId)) {
+    return res.status(404).json({ detail: "File not found" });
+  }
+  const file = await File.findById(req.params.fileId);
+  if (!file) return res.status(404).json({ detail: "File not found" });
+
+  if (!file.thumbnailLink) {
+    return res.status(404).json({ detail: "Thumbnail not available" });
+  }
+
+  try {
+    const response = await fetch(file.thumbnailLink);
+    if (!response.ok) throw new Error("Failed to fetch thumbnail from Google");
+
+    const contentType = response.headers.get("content-type") || "image/jpeg";
+    res.setHeader("Content-Type", contentType);
+    res.setHeader("Cache-Control", "public, max-age=86400"); // Cache for 1 day
+
+    const buffer = await response.arrayBuffer();
+    return res.send(Buffer.from(buffer));
+  } catch (err) {
+    console.error(`[Thumbnail] Error for file ${file.driveFileId}:`, err.message);
+    return res.status(502).json({ detail: "Error fetching thumbnail proxy" });
+  }
 }
 
 // ── GET /api/files/:fileId/download ──────────────────────────────────────────

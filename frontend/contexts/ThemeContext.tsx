@@ -15,6 +15,7 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     setMounted(true);
+    // Sync React state with the class added by layout.tsx inline script
     const isLight = document.documentElement.classList.contains("light");
     setTheme(isLight ? "light" : "dark");
   }, []);

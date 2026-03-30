@@ -257,6 +257,14 @@ body {
   box-shadow: 0 12px 32px rgba(0,0,0,0.08);
 }
 
+/* ── Prevent browser default drag on icons/images ─────────────────────────── */
+.thumbnail-area img, .thumbnail-area svg {
+  -webkit-touch-callout: none; /* Disable long-press menu on iOS */
+  -webkit-user-select: none;
+  user-select: none;
+  pointer-events: none; /* Let the touch/drag pass through to the parent card */
+}
+
 /* ── Progress bar ─────────────────────────────────────────── */
 .progress-bar {
   background: linear-gradient(90deg, var(--sd-accent), var(--sd-accent2));
