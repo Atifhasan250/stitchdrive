@@ -5,13 +5,14 @@ import cookieParser from "cookie-parser";
 import cors from "cors";
 import helmet from "helmet";
 import morgan from "morgan";
+import { clerkMiddleware } from "@clerk/express";
 
 import { connectDB } from "./db/index.js";
 import { loadSecretsFromDB } from "./utils/configLoader.js";
-import { syncFilesFromDrives, preWarmTokens } from "./services/driveService.js";
+import { syncFilesFromDrives } from "./services/driveService.js";
 import { FRONTEND_URL } from "./config/index.js";
 
-import authRoutes from "./routes/auth.js";
+
 import accountsRoutes from "./routes/accounts.js";
 import filesRoutes from "./routes/files.js";
 import profileRoutes from "./routes/profile.js";
@@ -55,8 +56,11 @@ app.use(cookieParser());
 app.use(express.json({ limit: "1mb" }));
 app.use(express.urlencoded({ extended: true, limit: "1mb" }));
 
+// ── Clerk authentication ──────────────────────────────────────────────────────
+app.use(clerkMiddleware());
+
 // ── Routes ────────────────────────────────────────────────────────────────────
-app.use("/api/auth", authRoutes);
+
 app.use("/api/accounts", accountsRoutes);
 app.use("/api/files", filesRoutes);
 app.use("/api/profile", profileRoutes);
@@ -67,31 +71,14 @@ app.get("/active", (req, res) => res.json({ status: "active" }));
 // ── Global error handler (must be last) ──────────────────────────────────────
 app.use(errorHandler);
 
-// ── Background periodic sync (every 15 minutes) ───────────────────────────────
-function startPeriodicSync() {
-  const INTERVAL_MS = 15 * 60 * 1000;
-  setInterval(() => {
-    syncFilesFromDrives()
-      .then((total) => console.log(`[Sync] Periodic sync complete — ${total} files indexed.`))
-      .catch((err) => console.error("[Sync] Periodic sync error:", err.message));
-  }, INTERVAL_MS);
-  console.log("[Sync] Periodic sync scheduled every 15 minutes.");
-}
+
 
 // ── Bootstrap ─────────────────────────────────────────────────────────────────
 async function bootstrap() {
   await connectDB();
   await loadSecretsFromDB();
 
-  // Pre-warm OAuth2 tokens so first user request has no token exchange delay
-  await preWarmTokens();
-
-  // Startup sync (non-blocking — runs in background)
-  syncFilesFromDrives()
-    .then((total) => console.log(`[Sync] Startup sync complete — ${total} files indexed.`))
-    .catch((err) => console.error("[Sync] Startup sync error:", err.message));
-
-  startPeriodicSync();
+  // Pre-warming tokens is now per-user, we just initialize DB.
 
   app.listen(PORT, "0.0.0.0", () => {
     console.log(

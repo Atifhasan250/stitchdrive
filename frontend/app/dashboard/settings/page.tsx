@@ -1,5 +1,6 @@
 "use client";
 
+import { useAuth, useSignIn } from "@clerk/nextjs";
 import { useState } from "react";
 import { useStorage } from "@/hooks/useStorage";
 import { useUpload } from "@/contexts/UploadContext";
@@ -13,7 +14,8 @@ function formatBytes(bytes: number): string {
 
 export default function SettingsPage() {
   const { accounts, refreshStorage } = useStorage();
-  const { confirm } = useUpload();
+  const { confirm, toast } = useUpload();
+  const { getToken } = useAuth();
   const [connecting, setConnecting] = useState(false);
 
   const totalUsed = accounts.reduce((s, a) => s + a.used, 0);
@@ -27,23 +29,50 @@ export default function SettingsPage() {
       : "Permanently remove this account slot from your dashboard? You can add it back anytime.";
     
     confirm(confirmMsg, async () => {
-      await fetch(`/api/accounts/${index}`, { method: "DELETE", credentials: "include" });
+      const token = await getToken();
+      await fetch(`/api/accounts/${index}`, { 
+        method: "DELETE", 
+        headers: { Authorization: `Bearer ${token}` },
+        credentials: "include" 
+      });
       refreshStorage();
     }, { description: body, confirmLabel: isConnected ? "Disconnect" : "Remove", danger: true });
   }
 
   async function handleConnect(index: number) {
-    const res = await fetch(`/api/auth/oauth/${index}`, { credentials: "include" });
-    const data = await res.json();
-    window.location.href = data.auth_url;
+    try {
+      const token = await getToken();
+      const res = await fetch(`/api/accounts/oauth/${index}`, { 
+        headers: { Authorization: `Bearer ${token}` },
+        credentials: "include" 
+      });
+      if (!res.ok) throw new Error("Failed to get auth URL");
+      const data = await res.json();
+      if (data.auth_url) window.location.href = data.auth_url;
+      else throw new Error("No auth URL returned");
+    } catch (err: any) {
+      toast(err.message || "Connection failed", "error");
+    }
   }
 
   async function handleConnectNew() {
     if (connecting) return;
     setConnecting(true);
-    const res = await fetch("/api/auth/oauth/new", { credentials: "include" });
-    const data = await res.json();
-    window.location.href = data.auth_url;
+    try {
+      const token = await getToken();
+      const res = await fetch("/api/accounts/oauth/new", { 
+        headers: { Authorization: `Bearer ${token}` },
+        credentials: "include" 
+      });
+      if (!res.ok) throw new Error("Failed to initiate connection");
+      const data = await res.json();
+      if (data.auth_url) window.location.href = data.auth_url;
+      else throw new Error("No auth URL returned");
+    } catch (err: any) {
+      toast(err.message || "Connection failed", "error");
+    } finally {
+      setConnecting(false);
+    }
   }
 
   return (

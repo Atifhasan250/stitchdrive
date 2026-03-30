@@ -84,7 +84,7 @@ export default function Sidebar({ isOpen, onClose }: SidebarProps) {
     localStorage.setItem("sd-sidebar-collapsed", String(collapsed));
   }, [collapsed]);
 
-  const totalUsed  = accounts.reduce((s, a) => s + a.used, 0);
+  const totalUsed = accounts.reduce((s, a) => s + a.used, 0);
   const totalLimit = accounts.reduce((s, a) => s + a.limit, 0);
   const pct = totalLimit > 0 ? Math.min(100, (totalUsed / totalLimit) * 100) : 0;
   const connectedCount = accounts.filter((a) => a.is_connected).length;
@@ -111,7 +111,7 @@ export default function Sidebar({ isOpen, onClose }: SidebarProps) {
       >
         {/* Logo */}
         <div className={`flex items-center border-b border-sd-border px-3 py-[13px] ${collapsed ? "lg:justify-center" : "justify-between"}`}>
-          <div className={`flex items-center gap-2.5 ${collapsed ? "lg:justify-center" : ""}`}>
+          <Link href="/" className={`flex items-center gap-2.5 transition hover:opacity-80 ${collapsed ? "lg:justify-center" : ""}`}>
             {/* Logo mark */}
             <div className="relative flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-lg overflow-hidden">
               <div className="absolute inset-0 bg-gradient-accent" />
@@ -124,7 +124,7 @@ export default function Sidebar({ isOpen, onClose }: SidebarProps) {
             <span className={`text-sm font-semibold tracking-tight text-sd-text ${collapsed ? "lg:hidden" : ""}`}>
               StitchDrive
             </span>
-          </div>
+          </Link>
 
           <button
             onClick={onClose}

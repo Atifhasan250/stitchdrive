@@ -1,5 +1,3 @@
-import bcrypt from "bcrypt";
-import jwt from "jsonwebtoken";
 import crypto from "crypto";
 import * as config from "../config/index.js";
 
@@ -63,30 +61,4 @@ export function decryptToken(fernetToken) {
   const decipher = crypto.createDecipheriv("aes-128-cbc", encryptionKey, iv);
   const decrypted = Buffer.concat([decipher.update(ciphertext), decipher.final()]);
   return decrypted.toString("utf8");
-}
-
-// ── PIN helpers ───────────────────────────────────────────────────────────────
-
-export async function hashPin(pin) {
-  return bcrypt.hash(pin, 12);
-}
-
-export async function verifyPin(pin) {
-  if (!config.DASHBOARD_PIN_HASH) throw new Error("Secrets not loaded");
-  return bcrypt.compare(pin, config.DASHBOARD_PIN_HASH);
-}
-
-// ── JWT helpers ───────────────────────────────────────────────────────────────
-
-export function createAccessToken(payload) {
-  if (!config.JWT_SECRET) throw new Error("Secrets not loaded");
-  return jwt.sign(payload, config.JWT_SECRET, {
-    algorithm: config.JWT_ALGORITHM,
-    expiresIn: `${config.JWT_EXPIRE_HOURS}h`,
-  });
-}
-
-export function verifyJWT(token) {
-  if (!config.JWT_SECRET) throw new Error("Secrets not loaded");
-  return jwt.verify(token, config.JWT_SECRET, { algorithms: [config.JWT_ALGORITHM] });
 }

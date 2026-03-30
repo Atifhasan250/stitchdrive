@@ -44,17 +44,19 @@ function fileToDict(f) {
 
 // ── POST /api/files/sync ──────────────────────────────────────────────────────
 export async function syncFiles(req, res) {
-  syncFilesFromDrives().catch((err) =>
-    console.error("[Sync] Background sync error:", err.message)
+  const ownerId = req.ownerId;
+  syncFilesFromDrives(ownerId).catch((err) =>
+    console.error(`[Sync] Background sync error for ${ownerId}:`, err.message)
   );
   return res.json({ ok: true });
 }
 
 // ── GET /api/files ────────────────────────────────────────────────────────────
 export async function listFiles(req, res) {
-  const connected = await DriveAccount.find({ isConnected: true }).select("accountIndex").lean();
+  const ownerId = req.ownerId;
+  const connected = await DriveAccount.find({ ownerId, isConnected: true }).select("accountIndex").lean();
   const connectedIndices = connected.map((a) => a.accountIndex);
-  const files = await File.find({ accountIndex: { $in: connectedIndices } })
+  const files = await File.find({ ownerId, accountIndex: { $in: connectedIndices } })
     .sort({ createdAt: -1 })
     .lean();
   return res.json(files.map(fileToDict));
@@ -62,18 +64,19 @@ export async function listFiles(req, res) {
 
 // ── POST /api/files/upload/initiate ───────────────────────────────────────────
 export async function initiateUpload(req, res) {
+  const ownerId = req.ownerId;
   const { fileName, mimeType, parentFolderId } = req.body;
   let { accountIndex } = req.body;
 
   if (accountIndex === undefined || accountIndex === null) {
-    accountIndex = await pickBestAccount();
+    accountIndex = await pickBestAccount(ownerId);
   }
 
   if (accountIndex === null) {
     return res.status(503).json({ detail: "No connected Drive accounts available" });
   }
 
-  const account = await DriveAccount.findOne({ accountIndex });
+  const account = await DriveAccount.findOne({ ownerId, accountIndex });
   if (!account) return res.status(404).json({ detail: "Account not found" });
 
   try {
@@ -90,7 +93,6 @@ export async function initiateUpload(req, res) {
         headers: {
           Authorization: `Bearer ${token}`,
           "Content-Type": "application/json; charset=UTF-8",
-          // Pass the origin of the client to enable CORS for the subsequent PUT request
           "Origin": req.get("origin"),
           "X-Upload-Content-Type": mimeType || "application/octet-stream",
         },
@@ -113,8 +115,9 @@ export async function initiateUpload(req, res) {
 
 // ── POST /api/files/upload/finalize ───────────────────────────────────────────
 export async function finalizeUpload(req, res) {
+  const ownerId = req.ownerId;
   const { driveFileId, accountIndex } = req.body;
-  const account = await DriveAccount.findOne({ accountIndex });
+  const account = await DriveAccount.findOne({ ownerId, accountIndex });
   if (!account) return res.status(404).json({ detail: "Account not found" });
 
   try {
@@ -124,8 +127,6 @@ export async function finalizeUpload(req, res) {
       fields: "id,name,size,mimeType,thumbnailLink,parents,createdTime",
     });
 
-    // Google often takes 1-3 seconds to generate a thumbnail link after upload.
-    // If it's missing, we wait 2 seconds and retry once.
     if (!result.data.thumbnailLink && result.data.mimeType?.startsWith("image/")) {
        await new Promise(resolve => setTimeout(resolve, 2000));
        result = await drive.files.get({
@@ -136,7 +137,7 @@ export async function finalizeUpload(req, res) {
 
     const data = result.data;
     const dbFile = await File.findOneAndUpdate(
-      { driveFileId: data.id, accountIndex },
+      { ownerId, driveFileId: data.id, accountIndex },
       {
         $set: {
           fileName: data.name,
@@ -159,10 +160,11 @@ export async function finalizeUpload(req, res) {
 
 // ── GET /api/files/:fileId/thumbnail ─────────────────────────────────────────
 export async function getThumbnail(req, res) {
+  const ownerId = req.ownerId;
   if (!isValidObjectId(req.params.fileId)) {
     return res.status(404).json({ detail: "File not found" });
   }
-  const file = await File.findById(req.params.fileId);
+  const file = await File.findOne({ _id: req.params.fileId, ownerId });
   if (!file) return res.status(404).json({ detail: "File not found" });
 
   if (!file.thumbnailLink) {
@@ -187,13 +189,14 @@ export async function getThumbnail(req, res) {
 
 // ── GET /api/files/:fileId/download ──────────────────────────────────────────
 export async function getDownload(req, res) {
+  const ownerId = req.ownerId;
   if (!isValidObjectId(req.params.fileId)) {
     return res.status(404).json({ detail: "File not found" });
   }
-  const file = await File.findById(req.params.fileId);
+  const file = await File.findOne({ _id: req.params.fileId, ownerId });
   if (!file) return res.status(404).json({ detail: "File not found" });
 
-  const account = await DriveAccount.findOne({ accountIndex: file.accountIndex });
+  const account = await DriveAccount.findOne({ ownerId, accountIndex: file.accountIndex });
   if (!account || !account.isConnected) {
     return res.status(503).json({ detail: "Account not connected" });
   }
@@ -219,13 +222,14 @@ export async function getDownload(req, res) {
 
 // ── GET /api/files/:fileId/view ───────────────────────────────────────────────
 export async function getView(req, res) {
+  const ownerId = req.ownerId;
   if (!isValidObjectId(req.params.fileId)) {
     return res.status(404).json({ detail: "File not found" });
   }
-  const file = await File.findById(req.params.fileId);
+  const file = await File.findOne({ _id: req.params.fileId, ownerId });
   if (!file) return res.status(404).json({ detail: "File not found" });
 
-  const account = await DriveAccount.findOne({ accountIndex: file.accountIndex });
+  const account = await DriveAccount.findOne({ ownerId, accountIndex: file.accountIndex });
   if (!account || !account.isConnected) {
     return res.status(503).json({ detail: "Account not connected" });
   }
@@ -251,20 +255,20 @@ export async function getView(req, res) {
 
 // ── PATCH /api/files/:fileId/rename ──────────────────────────────────────────
 export async function rename(req, res) {
+  const ownerId = req.ownerId;
   if (!isValidObjectId(req.params.fileId)) {
     return res.status(404).json({ detail: "File not found" });
   }
 
-  // BUG FIX: validate new_name before calling Drive API
   const newName = req.body.new_name?.trim();
   if (!newName) {
     return res.status(400).json({ detail: "new_name is required and cannot be empty" });
   }
 
-  const file = await File.findById(req.params.fileId);
+  const file = await File.findOne({ _id: req.params.fileId, ownerId });
   if (!file) return res.status(404).json({ detail: "File not found" });
 
-  const account = await DriveAccount.findOne({ accountIndex: file.accountIndex });
+  const account = await DriveAccount.findOne({ ownerId, accountIndex: file.accountIndex });
   if (!account) return res.status(404).json({ detail: "Account not found" });
 
   await renameFile(account, file.driveFileId, newName);
@@ -276,6 +280,7 @@ export async function rename(req, res) {
 
 // ── PATCH /api/files/:fileId/move ─────────────────────────────────────────────
 export async function moveFileRoute(req, res) {
+  const ownerId = req.ownerId;
   if (!isValidObjectId(req.params.fileId)) {
     return res.status(404).json({ detail: "File not found" });
   }
@@ -285,10 +290,10 @@ export async function moveFileRoute(req, res) {
     return res.status(400).json({ detail: "new_parent_drive_file_id is required" });
   }
 
-  const file = await File.findById(req.params.fileId);
+  const file = await File.findOne({ _id: req.params.fileId, ownerId });
   if (!file) return res.status(404).json({ detail: "File not found" });
 
-  const account = await DriveAccount.findOne({ accountIndex: file.accountIndex });
+  const account = await DriveAccount.findOne({ ownerId, accountIndex: file.accountIndex });
   if (!account) return res.status(404).json({ detail: "Account not found" });
 
   try {
@@ -306,13 +311,14 @@ export async function moveFileRoute(req, res) {
 
 // ── POST /api/files/:fileId/share ─────────────────────────────────────────────
 export async function shareFileRoute(req, res) {
+  const ownerId = req.ownerId;
   if (!isValidObjectId(req.params.fileId)) {
     return res.status(404).json({ detail: "File not found" });
   }
-  const file = await File.findById(req.params.fileId);
+  const file = await File.findOne({ _id: req.params.fileId, ownerId });
   if (!file) return res.status(404).json({ detail: "File not found" });
 
-  const account = await DriveAccount.findOne({ accountIndex: file.accountIndex });
+  const account = await DriveAccount.findOne({ ownerId, accountIndex: file.accountIndex });
   if (!account || !account.isConnected) {
     return res.status(503).json({ detail: "Account not connected" });
   }
@@ -328,13 +334,14 @@ export async function shareFileRoute(req, res) {
 
 // ── DELETE /api/files/:fileId/share ──────────────────────────────────────────
 export async function unshareFileRoute(req, res) {
+  const ownerId = req.ownerId;
   if (!isValidObjectId(req.params.fileId)) {
     return res.status(404).json({ detail: "File not found" });
   }
-  const file = await File.findById(req.params.fileId);
+  const file = await File.findOne({ _id: req.params.fileId, ownerId });
   if (!file) return res.status(404).json({ detail: "File not found" });
 
-  const account = await DriveAccount.findOne({ accountIndex: file.accountIndex });
+  const account = await DriveAccount.findOne({ ownerId, accountIndex: file.accountIndex });
   if (!account || !account.isConnected) {
     return res.status(503).json({ detail: "Account not connected" });
   }
@@ -350,13 +357,14 @@ export async function unshareFileRoute(req, res) {
 
 // ── DELETE /api/files/:fileId ─────────────────────────────────────────────────
 export async function deleteFile(req, res) {
+  const ownerId = req.ownerId;
   if (!isValidObjectId(req.params.fileId)) {
     return res.status(404).json({ detail: "File not found" });
   }
-  const file = await File.findById(req.params.fileId);
+  const file = await File.findOne({ _id: req.params.fileId, ownerId });
   if (!file) return res.status(404).json({ detail: "File not found" });
 
-  const account = await DriveAccount.findOne({ accountIndex: file.accountIndex });
+  const account = await DriveAccount.findOne({ ownerId, accountIndex: file.accountIndex });
   if (account && account.isConnected) {
     try {
       await trashDriveFile(account, file.driveFileId);
@@ -369,11 +377,12 @@ export async function deleteFile(req, res) {
 
 // ── GET /api/files/shared/:accountIndex/:driveFileId/download ─────────────────
 export async function downloadSharedFile(req, res) {
+  const ownerId = req.ownerId;
   const accountIndex = parseInt(req.params.accountIndex, 10);
   if (isNaN(accountIndex)) return res.status(400).json({ detail: "Invalid account index" });
   const { driveFileId } = req.params;
 
-  const account = await DriveAccount.findOne({ accountIndex });
+  const account = await DriveAccount.findOne({ ownerId, accountIndex });
   if (!account || !account.isConnected) {
     return res.status(503).json({ detail: "Account not connected" });
   }
@@ -399,11 +408,12 @@ export async function downloadSharedFile(req, res) {
 
 // ── GET /api/files/shared/:accountIndex/:folderId/children ────────────────────
 export async function listSharedChildren(req, res) {
+  const ownerId = req.ownerId;
   const accountIndex = parseInt(req.params.accountIndex, 10);
   if (isNaN(accountIndex)) return res.status(400).json({ detail: "Invalid account index" });
   const { folderId } = req.params;
 
-  const account = await DriveAccount.findOne({ accountIndex });
+  const account = await DriveAccount.findOne({ ownerId, accountIndex });
   if (!account || !account.isConnected) {
     return res.status(503).json({ detail: "Account not connected" });
   }
@@ -428,11 +438,12 @@ export async function listSharedChildren(req, res) {
 
 // ── DELETE /api/files/shared/:accountIndex/:driveFileId ──────────────────────
 export async function deleteSharedFile(req, res) {
+  const ownerId = req.ownerId;
   const accountIndex = parseInt(req.params.accountIndex, 10);
   if (isNaN(accountIndex)) return res.status(400).json({ detail: "Invalid account index" });
   const { driveFileId } = req.params;
 
-  const account = await DriveAccount.findOne({ accountIndex });
+  const account = await DriveAccount.findOne({ ownerId, accountIndex });
   if (!account || !account.isConnected) {
     return res.status(503).json({ detail: "Account not connected" });
   }
@@ -449,9 +460,9 @@ export async function deleteSharedFile(req, res) {
 }
 
 // ── GET /api/files/shared ─────────────────────────────────────────────────────
-// BUG FIX: fetch all accounts in parallel with Promise.allSettled
 export async function listShared(req, res) {
-  const accounts = await DriveAccount.find({ isConnected: true }).lean();
+  const ownerId = req.ownerId;
+  const accounts = await DriveAccount.find({ ownerId, isConnected: true }).lean();
   const settled = await Promise.allSettled(accounts.map((acc) => listSharedFiles(acc)));
   const results = settled
     .filter((r) => r.status === "fulfilled")
@@ -472,9 +483,9 @@ export async function listShared(req, res) {
 }
 
 // ── GET /api/files/trash ──────────────────────────────────────────────────────
-// BUG FIX: fetch all accounts in parallel with Promise.allSettled
 export async function listTrash(req, res) {
-  const accounts = await DriveAccount.find({ isConnected: true }).lean();
+  const ownerId = req.ownerId;
+  const accounts = await DriveAccount.find({ ownerId, isConnected: true }).lean();
   const settled = await Promise.allSettled(accounts.map((acc) => listTrashFiles(acc)));
   const results = settled
     .filter((r) => r.status === "fulfilled")
@@ -495,11 +506,12 @@ export async function listTrash(req, res) {
 
 // ── POST /api/files/trash/:accountIndex/:driveFileId/restore ─────────────────
 export async function restoreTrashFile(req, res) {
+  const ownerId = req.ownerId;
   const accountIndex = parseInt(req.params.accountIndex, 10);
   if (isNaN(accountIndex)) return res.status(400).json({ detail: "Invalid account index" });
   const { driveFileId } = req.params;
 
-  const account = await DriveAccount.findOne({ accountIndex });
+  const account = await DriveAccount.findOne({ ownerId, accountIndex });
   if (!account || !account.isConnected) {
     return res.status(503).json({ detail: "Account not connected" });
   }
@@ -514,11 +526,12 @@ export async function restoreTrashFile(req, res) {
 
 // ── DELETE /api/files/trash/:accountIndex/:driveFileId ───────────────────────
 export async function deleteTrashFile(req, res) {
+  const ownerId = req.ownerId;
   const accountIndex = parseInt(req.params.accountIndex, 10);
   if (isNaN(accountIndex)) return res.status(400).json({ detail: "Invalid account index" });
   const { driveFileId } = req.params;
 
-  const account = await DriveAccount.findOne({ accountIndex });
+  const account = await DriveAccount.findOne({ ownerId, accountIndex });
   if (!account || !account.isConnected) {
     return res.status(503).json({ detail: "Account not connected" });
   }

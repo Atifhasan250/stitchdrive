@@ -1,18 +1,21 @@
 "use client";
 
-import { useSignIn, useAuth } from "@clerk/nextjs";
+import { useAuth, useSignUp } from "@clerk/nextjs";
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import type { OAuthStrategy } from "@clerk/shared/types";
+import { isClerkAPIResponseError } from "@clerk/nextjs/errors";
 
-export default function LoginPage() {
-  const { signIn, fetchStatus } = useSignIn();
+export default function SignUpPage() {
+  // @ts-ignore
+  const { signUp, fetchStatus, setActive } = useSignUp();
   const { isSignedIn } = useAuth();
   const router = useRouter();
 
   const [loading, setLoading] = useState(false);
   const [errorMsg, setErrorMsg] = useState("");
+  const [verifying, setVerifying] = useState(false);
 
   useEffect(() => {
     if (isSignedIn) {
@@ -22,7 +25,7 @@ export default function LoginPage() {
 
   async function handleSubmit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
-    if (!signIn) return;
+    if (!signUp) return;
     setErrorMsg("");
     setLoading(true);
 
@@ -31,50 +34,168 @@ export default function LoginPage() {
     const password = formData.get("password") as string;
 
     try {
-      const { error } = await signIn.password({ identifier: emailAddress, password });
+      await signUp.create({
+        emailAddress,
+      });
 
-      if (error) {
-        setLoading(false);
-        setErrorMsg(error.longMessage || error.message || "Invalid email or password.");
-        return;
-      }
+      await signUp.password({
+        password,
+      });
 
-      if (signIn.status === "complete") {
-        await signIn.finalize({
-          navigate: () => router.push("/dashboard"),
-        });
-      } else {
-        setLoading(false);
-      }
+      await signUp.verifications.sendEmailCode();
+      setVerifying(true);
     } catch (err: any) {
+      if (isClerkAPIResponseError(err)) {
+        setErrorMsg(err.errors[0]?.longMessage || "Sign up failed.");
+      } else {
+        setErrorMsg("An error occurred during sign up.");
+      }
+    } finally {
       setLoading(false);
-      setErrorMsg(err.errors?.[0]?.longMessage || err.message || "Sign in failed.");
     }
   }
 
-  async function handleSocialLogin(strategy: OAuthStrategy) {
-    if (!signIn) return;
+  async function handleVerify(e: React.FormEvent<HTMLFormElement>) {
+    e.preventDefault();
+    if (!signUp) return;
+    setErrorMsg("");
+    setLoading(true);
+
+    const formData = new FormData(e.currentTarget);
+    const code = formData.get("code") as string;
+
+    try {
+      const { error } = await signUp.verifications.verifyEmailCode({
+        code,
+      });
+
+      if (error) {
+        setErrorMsg(error.longMessage || "Verification failed.");
+        setLoading(false);
+        return;
+      }
+
+      if (signUp.status === "complete") {
+        await signUp.finalize({
+          navigate: () => router.push("/dashboard"),
+        });
+      }
+    } catch (err: any) {
+      if (isClerkAPIResponseError(err)) {
+        setErrorMsg(err.errors[0]?.longMessage || "Verification failed.");
+      } else {
+        setErrorMsg("An error occurred during verification.");
+      }
+      setLoading(false);
+    }
+  }
+
+  async function handleSocialSignUp(strategy: OAuthStrategy) {
+    if (!signUp) return;
     setErrorMsg("");
     try {
-      await signIn.sso({
+      await signUp.sso({
         strategy,
         redirectCallbackUrl: "/sso-callback",
         redirectUrl: "/dashboard",
       });
     } catch (err) {
-      setErrorMsg("Social login failed.");
+      setErrorMsg("Social sign up failed.");
     }
   }
 
-  if (!signIn) return null;
+  if (!signUp) return null;
 
-  // Redirect if already signed in
-  if (isSignedIn) {
+  if (signUp.status === "complete" || isSignedIn) {
     return null;
   }
 
-  const isExecuting = fetchStatus === "fetching" || loading;
+  // Email verification step
+  if (verifying) {
+    return (
+      <main className="relative flex min-h-screen items-center justify-center overflow-hidden bg-sd-bg px-4">
+        <div className="dot-bg pointer-events-none absolute inset-0 opacity-40" />
+        <div className="pointer-events-none absolute inset-0">
+          <div className="absolute top-1/4 left-1/2 -translate-x-1/2 h-96 w-96 rounded-full bg-sd-accent/5 blur-3xl" />
+        </div>
 
+        <div className="relative w-full max-w-sm animate-fade-up">
+          <div className="absolute -inset-px rounded-2xl bg-gradient-to-b from-sd-accent/20 to-transparent pointer-events-none" />
+          <div className="relative rounded-2xl border border-sd-border bg-sd-s1 p-8 shadow-card">
+            <div className="absolute top-0 left-8 right-8 h-px bg-gradient-to-r from-transparent via-sd-accent/60 to-transparent" />
+
+            <button
+              type="button"
+              onClick={() => {
+                window.location.href = '/sign-up';
+              }}
+              className="absolute top-4 right-4 rounded-full p-1 text-sd-text2 hover:bg-sd-s2 hover:text-sd-text transition"
+              aria-label="Back to edit email"
+            >
+              <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <line x1="18" y1="6" x2="6" y2="18" />
+                <line x1="6" y1="6" x2="18" y2="18" />
+              </svg>
+            </button>
+
+            <div className="mb-6 text-center">
+              <h1 className="font-display text-2xl text-sd-text">Verify your email</h1>
+              <p className="mt-1.5 text-sm text-sd-text2">We sent a code to your email</p>
+            </div>
+
+            <form onSubmit={handleVerify} className="space-y-3.5">
+              <div>
+                <label htmlFor="code" className="block text-xs font-medium text-sd-text2 mb-1.5">Verification Code</label>
+                <input
+                  id="code"
+                  name="code"
+                  type="text"
+                  placeholder="Enter 6-digit code"
+                  autoFocus
+                  required
+                  className="w-full rounded-xl border border-sd-border bg-sd-bg px-4 py-3 text-center text-lg tracking-[0.4em] text-sd-text placeholder-sd-text3 outline-none transition focus:border-sd-accent/50 focus:ring-2 focus:ring-sd-accent/10 font-mono"
+                />
+              </div>
+
+              {errorMsg && (
+                <div className="flex items-center gap-2 rounded-xl border border-red-500/20 bg-red-500/5 px-3.5 py-3">
+                  <svg className="h-4 w-4 flex-shrink-0 text-red-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m9-.75a9 9 0 1 1-18 0 9 9 0 0 1 18 0Zm-9 3.75h.008v.008H12v-.008Z" />
+                  </svg>
+                  <p className="text-sm text-red-400">{errorMsg}</p>
+                </div>
+              )}
+
+              <button
+                type="submit"
+                disabled={loading}
+                className="btn-primary w-full rounded-xl py-3.5 text-sm font-semibold disabled:cursor-not-allowed disabled:opacity-40"
+              >
+                {loading ? "Verifying…" : "Verify Email"}
+              </button>
+            </form>
+
+            <button
+              onClick={async () => {
+                try {
+                  await signUp.verifications.sendEmailCode();
+                } catch (e: any) {
+                  setErrorMsg("Failed to resend code.");
+                }
+              }}
+              className="mt-3 w-full text-center text-xs text-sd-accent hover:text-sd-accent/80 transition"
+            >
+              Resend code
+            </button>
+          </div>
+        </div>
+      </main>
+    );
+  }
+
+  const isExecuting = loading || fetchStatus === "fetching";
+
+  // Main sign-up form
   return (
     <main className="relative flex min-h-screen items-center justify-center overflow-hidden bg-sd-bg px-4">
       <div className="dot-bg pointer-events-none absolute inset-0 opacity-40" />
@@ -102,14 +223,14 @@ export default function LoginPage() {
               <span className="text-sm font-semibold tracking-tight text-sd-text">StitchDrive</span>
             </Link>
 
-            <h1 className="font-display text-2xl text-sd-text">Welcome back</h1>
-            <p className="mt-1.5 text-sm text-sd-text2">Sign in to access your drive</p>
+            <h1 className="font-display text-2xl text-sd-text">Create an account</h1>
+            <p className="mt-1.5 text-sm text-sd-text2">Get started with unlimited cloud storage</p>
           </div>
 
           <div className="space-y-2.5 mb-5">
             <button
               type="button"
-              onClick={() => handleSocialLogin("oauth_google")}
+              onClick={() => handleSocialSignUp("oauth_google")}
               className="flex w-full items-center justify-center gap-2.5 rounded-xl border border-sd-border bg-sd-bg px-4 py-3 text-sm font-medium text-sd-text hover:bg-sd-s2 hover:border-sd-accent/30 transition"
             >
               <svg className="h-4 w-4" viewBox="0 0 24 24">
@@ -122,7 +243,7 @@ export default function LoginPage() {
             </button>
             <button
               type="button"
-              onClick={() => handleSocialLogin("oauth_github")}
+              onClick={() => handleSocialSignUp("oauth_github")}
               className="flex w-full items-center justify-center gap-2.5 rounded-xl border border-sd-border bg-sd-bg px-4 py-3 text-sm font-medium text-sd-text hover:bg-sd-s2 hover:border-sd-accent/30 transition"
             >
               <svg className="h-4 w-4" fill="currentColor" viewBox="0 0 24 24">
@@ -149,8 +270,8 @@ export default function LoginPage() {
                 name="email"
                 type="email"
                 placeholder="you@example.com"
-                required
                 autoFocus
+                required
                 className="w-full rounded-xl border border-sd-border bg-sd-bg px-4 py-3 text-sm text-sd-text placeholder-sd-text3 outline-none transition focus:border-sd-accent/50 focus:ring-2 focus:ring-sd-accent/10"
               />
             </div>
@@ -186,15 +307,18 @@ export default function LoginPage() {
                     <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
                     <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
                   </svg>
-                  Signing in…
+                  Creating account…
                 </span>
-              ) : "Sign In"}
+              ) : "Create Account"}
             </button>
           </form>
 
+          {/* Bot protection captcha element */}
+          <div id="clerk-captcha" className="mt-3" />
+
           <p className="mt-5 text-center text-xs text-sd-text3">
-            Don&apos;t have an account?{" "}
-            <Link href="/sign-up" className="text-sd-accent hover:text-sd-accent/80 transition font-medium">Sign up</Link>
+            Already have an account?{" "}
+            <Link href="/login" className="text-sd-accent hover:text-sd-accent/80 transition font-medium">Sign in</Link>
           </p>
           <p className="mt-2 text-center text-xs text-sd-text3">
             <Link href="/" className="hover:text-sd-text transition">← Back to home</Link>

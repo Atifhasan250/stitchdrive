@@ -3,13 +3,16 @@
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useTheme } from "@/contexts/ThemeContext";
+import { useClerk, useUser } from "@clerk/nextjs";
 
-type ProfileData = { display_name: string | null; bio: string | null };
+type ProfileData = { display_name: string | null; bio: string | null; has_avatar: boolean };
 
 export default function Navbar({ onMenuOpen }: { onMenuOpen?: () => void }) {
   const router = useRouter();
+  const { signOut } = useClerk();
+  const { user } = useUser();
   const { theme, toggle } = useTheme();
-  const [profile, setProfile] = useState<ProfileData>({ display_name: null, bio: null });
+  const [profile, setProfile] = useState<ProfileData>({ display_name: null, bio: null, has_avatar: false });
   const [avatarKey, setAvatarKey] = useState(0);
   const [avatarLoaded, setAvatarLoaded] = useState(false);
   const [showModal, setShowModal] = useState(false);
@@ -21,13 +24,12 @@ export default function Navbar({ onMenuOpen }: { onMenuOpen?: () => void }) {
   useEffect(() => {
     fetch("/api/profile", { credentials: "include" })
       .then((r) => (r.ok ? r.json() : null))
-      .then((d) => d && setProfile({ display_name: d.display_name, bio: d.bio }))
+      .then((d) => d && setProfile({ display_name: d.display_name, bio: d.bio, has_avatar: d.has_avatar }))
       .catch(() => {});
   }, []);
 
   async function handleSignOut() {
-    await fetch("/api/auth/logout", { method: "POST", credentials: "include" });
-    router.push("/");
+    await signOut({ redirectUrl: "/" });
   }
 
   function openModal() {
@@ -44,7 +46,7 @@ export default function Navbar({ onMenuOpen }: { onMenuOpen?: () => void }) {
       body: JSON.stringify({ display_name: editName, bio: editBio }),
       credentials: "include",
     });
-    setProfile({ display_name: editName || null, bio: editBio || null });
+    setProfile({ display_name: editName || null, bio: editBio || null, has_avatar: profile.has_avatar });
     setSaving(false);
     setShowModal(false);
   }
@@ -57,8 +59,12 @@ export default function Navbar({ onMenuOpen }: { onMenuOpen?: () => void }) {
     await fetch("/api/profile/avatar", { method: "POST", body: form, credentials: "include" });
     setAvatarKey((k) => k + 1);
     setAvatarLoaded(false);
+    setProfile((prev) => ({ ...prev, has_avatar: true }));
     e.target.value = "";
   }
+
+  const avatarUrl = profile.has_avatar ? `/api/profile/avatar?t=${avatarKey}` : user?.imageUrl;
+  const displayName = profile.display_name || user?.fullName || user?.firstName || "Profile";
 
   return (
     <>
@@ -102,17 +108,19 @@ export default function Navbar({ onMenuOpen }: { onMenuOpen?: () => void }) {
               <svg className="h-4 w-4 text-sd-text3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
                 <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 6a3.75 3.75 0 1 1-7.5 0 3.75 3.75 0 0 1 7.5 0ZM4.501 20.118a7.5 7.5 0 0 1 14.998 0A17.933 17.933 0 0 1 12 21.75c-2.676 0-5.216-.584-7.499-1.632Z" />
               </svg>
-              <img
-                key={avatarKey}
-                src={`/api/profile/avatar?t=${avatarKey}`}
-                alt=""
-                className={`absolute inset-0 h-full w-full object-cover ${avatarLoaded ? "" : "hidden"}`}
-                onLoad={() => setAvatarLoaded(true)}
-                onError={() => setAvatarLoaded(false)}
-              />
+              {avatarUrl && (
+                <img
+                  key={avatarKey}
+                  src={avatarUrl}
+                  alt=""
+                  className={`absolute inset-0 h-full w-full object-cover ${avatarLoaded ? "" : "hidden"}`}
+                  onLoad={() => setAvatarLoaded(true)}
+                  onError={() => setAvatarLoaded(false)}
+                />
+              )}
             </div>
             <span className="hidden text-xs font-medium text-sd-text sm:inline">
-              {profile.display_name || "Profile"}
+              {displayName}
             </span>
             <svg className="h-3 w-3 text-sd-text3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
               <path strokeLinecap="round" strokeLinejoin="round" d="m16.862 4.487 1.687-1.688a1.875 1.875 0 1 1 2.652 2.652L6.832 19.82a4.5 4.5 0 0 1-1.897 1.13l-2.685.8.8-2.685a4.5 4.5 0 0 1 1.13-1.897L16.863 4.487Zm0 0L19.5 7.125" />
@@ -153,14 +161,16 @@ export default function Navbar({ onMenuOpen }: { onMenuOpen?: () => void }) {
                   <svg className="h-8 w-8 text-sd-text3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
                     <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 6a3.75 3.75 0 1 1-7.5 0 3.75 3.75 0 0 1 7.5 0ZM4.501 20.118a7.5 7.5 0 0 1 14.998 0A17.933 17.933 0 0 1 12 21.75c-2.676 0-5.216-.584-7.499-1.632Z" />
                   </svg>
-                  <img
-                    key={avatarKey}
-                    src={`/api/profile/avatar?t=${avatarKey}`}
-                    alt=""
-                    className={`absolute inset-0 h-full w-full object-cover ${avatarLoaded ? "" : "hidden"}`}
-                    onLoad={() => setAvatarLoaded(true)}
-                    onError={() => setAvatarLoaded(false)}
-                  />
+                  {avatarUrl && (
+                    <img
+                      key={avatarKey}
+                      src={avatarUrl}
+                      alt=""
+                      className={`absolute inset-0 h-full w-full object-cover ${avatarLoaded ? "" : "hidden"}`}
+                      onLoad={() => setAvatarLoaded(true)}
+                      onError={() => setAvatarLoaded(false)}
+                    />
+                  )}
                 </div>
                 <button
                   onClick={() => fileRef.current?.click()}
@@ -176,6 +186,12 @@ export default function Navbar({ onMenuOpen }: { onMenuOpen?: () => void }) {
                 <p className="font-medium text-sd-text">Profile Photo</p>
                 <p className="mt-0.5 text-sd-text3">Stored in your Drive</p>
               </div>
+            </div>
+
+            <div className="mb-5 text-center">
+              <p className="text-xs text-sd-text3 font-medium bg-sd-s2 py-2 px-3 rounded-xl inline-block">
+                {user?.primaryEmailAddress?.emailAddress || "Google Account Connected"}
+              </p>
             </div>
 
             <div className="space-y-3">

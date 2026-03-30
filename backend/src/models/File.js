@@ -2,6 +2,7 @@ import mongoose from "mongoose";
 
 const fileSchema = new mongoose.Schema(
   {
+    ownerId: { type: String, required: true, index: true },
     fileName: { type: String, required: true },
     driveFileId: { type: String, required: true },
     accountIndex: { type: Number, required: true },
@@ -14,8 +15,8 @@ const fileSchema = new mongoose.Schema(
   { collection: "files", timestamps: false }
 );
 
-fileSchema.index({ driveFileId: 1, accountIndex: 1 });
-fileSchema.index({ accountIndex: 1 });
+fileSchema.index({ ownerId: 1, driveFileId: 1, accountIndex: 1 });
+fileSchema.index({ ownerId: 1, accountIndex: 1 });
 
 const File = mongoose.model("File", fileSchema);
 export default File;

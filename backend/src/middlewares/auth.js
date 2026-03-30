@@ -1,14 +1,17 @@
-import { verifyJWT } from "../services/authService.js";
+import { getAuth } from "@clerk/express";
 
+/**
+ * Clerk-first auth middleware.
+ * Checks for Clerk userId (from JWT Bearer token set by frontend).
+ */
 export function requireAuth(req, res, next) {
-  const token = req.cookies?.access_token;
-  if (!token) {
-    return res.status(401).json({ detail: "Not authenticated" });
+  const clerkAuth = getAuth(req);
+  if (clerkAuth?.userId) {
+    req.user = { sub: clerkAuth.userId };
+    req.ownerId = clerkAuth.userId;
+    return next();
   }
-  try {
-    req.user = verifyJWT(token);
-    next();
-  } catch {
-    return res.status(401).json({ detail: "Invalid or expired token" });
-  }
+
+  // Not authenticated via Clerk
+  return res.status(401).json({ detail: "Not authenticated via Clerk" });
 }

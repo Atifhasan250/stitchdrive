@@ -1,5 +1,6 @@
 "use client";
 
+import { useAuth } from "@clerk/nextjs";
 import { createContext, useCallback, useContext, useEffect, useRef, useState } from "react";
 
 type Snack = { id: number; name: string; progress: number; status: "uploading" | "done" | "error" };
@@ -25,6 +26,7 @@ const UploadContext = createContext<UploadCtx>({
 } as UploadCtx);
 
 export function UploadProvider({ children }: { children: React.ReactNode }) {
+  const { getToken } = useAuth();
   const [snacks, setSnacks] = useState<Snack[]>([]);
   const [toasts, setToasts] = useState<Toast[]>([]);
   const [confirmState, setConfirmState] = useState<ConfirmState | null>(null);
@@ -87,11 +89,15 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
 
     try {
       const parentId = parentFolderDriveId !== undefined ? parentFolderDriveId : currentFolderRef.current;
+      const token = await getToken();
       
       // Step 1: Initiate upload session with backend
       const initRes = await fetch("/api/files/upload/initiate", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { 
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`
+        },
         body: JSON.stringify({
           fileName,
           mimeType: fileType,
@@ -132,7 +138,10 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
             // Step 3: Finalize metadata in our DB
             const finalRes = await fetch("/api/files/upload/finalize", {
               method: "POST",
-              headers: { "Content-Type": "application/json" },
+              headers: { 
+                "Content-Type": "application/json",
+                Authorization: `Bearer ${token}`
+              },
               body: JSON.stringify({ driveFileId, accountIndex }),
             });
 
@@ -163,7 +172,7 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
       console.error("[Upload] Critical Error:", err.message);
       setSnacks((s) => s.map((sn) => (sn.id === id ? { ...sn, status: "error" } : sn)));
     }
-  }, []);
+  }, [getToken]);
 
   useEffect(() => {
     function onDragEnter(e: DragEvent) {

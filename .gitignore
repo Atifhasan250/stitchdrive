@@ -4,6 +4,8 @@ config/credentials.json
 backend/config/credentials.json
 backend/.env
 backend/.env.*
+frontend/.env
+frontend/.env.*
 backend/drivepool.db
 backend/*.db
 
@@ -32,6 +34,7 @@ coverage.xml
 
 # ── Node / Next.js ────────────────────────────────────────────────────────────
 node_modules/
+frontend/.clerk/
 frontend/.next/
 frontend/out/
 frontend/dist/
