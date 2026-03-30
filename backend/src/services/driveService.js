@@ -10,14 +10,60 @@ import * as config from "../config/index.js";
 const SCOPES = ["https://www.googleapis.com/auth/drive"];
 const PROFILE_FOLDER_NAME = "_DrivePool_";
 
+// ── Credentials file cache (read disk once, reuse forever) ────────────────────
+let _cachedClientConfig = null;
+
 function getCredentialsPath() {
   return path.join(config.CONFIG_DIR, "credentials.json");
 }
 
 function loadClientConfig() {
+  if (_cachedClientConfig) return _cachedClientConfig;
   const raw = fs.readFileSync(getCredentialsPath(), "utf8");
   const parsed = JSON.parse(raw);
-  return parsed.web || parsed.installed;
+  _cachedClientConfig = parsed.web || parsed.installed;
+  return _cachedClientConfig;
+}
+
+// ── OAuth2 client cache (one per account index, rebuilt only when needed) ─────
+const _oauth2Cache = new Map(); // accountIndex → oauth2Client
+
+function getOAuth2Client(account) {
+  const cached = _oauth2Cache.get(account.accountIndex);
+  if (cached) return cached;
+  const clientConfig = loadClientConfig();
+  const oauth2Client = new google.auth.OAuth2(
+    clientConfig.client_id,
+    clientConfig.client_secret,
+    clientConfig.redirect_uris?.[0]
+  );
+  const refreshToken = decryptToken(account.refreshToken);
+  oauth2Client.setCredentials({ refresh_token: refreshToken });
+  _oauth2Cache.set(account.accountIndex, oauth2Client);
+  return oauth2Client;
+}
+
+export function invalidateOAuth2Cache(accountIndex) {
+  _oauth2Cache.delete(accountIndex);
+}
+
+// ── Quota in-memory cache (TTL: 60s — avoids Google API call per page load) ───
+const QUOTA_CACHE_TTL_MS = 60_000;
+const _quotaCache = new Map(); // accountIndex → { data, expiresAt }
+
+function getCachedQuota(accountIndex) {
+  const entry = _quotaCache.get(accountIndex);
+  if (entry && Date.now() < entry.expiresAt) return entry.data;
+  return null;
+}
+
+function setCachedQuota(accountIndex, data) {
+  _quotaCache.set(accountIndex, { data, expiresAt: Date.now() + QUOTA_CACHE_TTL_MS });
+}
+
+export function invalidateQuotaCache(accountIndex) {
+  if (accountIndex != null) _quotaCache.delete(accountIndex);
+  else _quotaCache.clear();
 }
 
 // ── Rate-limit retry ──────────────────────────────────────────────────────────
@@ -44,15 +90,7 @@ export function buildService(account) {
   if (!account.refreshToken) {
     throw new Error(`Account ${account.accountIndex} is not connected (no refresh token)`);
   }
-  const refreshToken = decryptToken(account.refreshToken);
-  const clientConfig = loadClientConfig();
-
-  const oauth2Client = new google.auth.OAuth2(
-    clientConfig.client_id,
-    clientConfig.client_secret,
-    clientConfig.redirect_uris?.[0]
-  );
-  oauth2Client.setCredentials({ refresh_token: refreshToken });
+  const oauth2Client = getOAuth2Client(account);
   return google.drive({ version: "v3", auth: oauth2Client });
 }
 
@@ -78,9 +116,12 @@ export function getAuthUrl(oauth2Client, state) {
   });
 }
 
-// ── Storage quota ─────────────────────────────────────────────────────────────
+// ── Storage quota (cached) ────────────────────────────────────────────────────
 
 export async function getStorageQuota(account) {
+  const cached = getCachedQuota(account.accountIndex);
+  if (cached) return cached;
+
   try {
     const drive = buildService(account);
     const result = await retryOnRateLimit(() =>
@@ -89,7 +130,7 @@ export async function getStorageQuota(account) {
     const quota = result.data.storageQuota;
     const used = parseInt(quota.usage || "0", 10);
     const limit = parseInt(quota.limit || String(15 * 1024 ** 3), 10);
-    return {
+    const data = {
       accountIndex: account.accountIndex,
       email: account.email,
       isConnected: account.isConnected,
@@ -97,6 +138,8 @@ export async function getStorageQuota(account) {
       limit,
       free: Math.max(0, limit - used),
     };
+    setCachedQuota(account.accountIndex, data);
+    return data;
   } catch (err) {
     const isRefreshError =
       err.message?.includes("invalid_grant") ||
@@ -118,7 +161,7 @@ export async function getAllQuotas(accounts) {
 }
 
 export async function pickBestAccount() {
-  const accounts = await DriveAccount.find({ isConnected: true });
+  const accounts = await DriveAccount.find({ isConnected: true }).lean();
   const quotas = await getAllQuotas(accounts);
   const connected = quotas.filter((q) => q.isConnected && q.free > 0);
   if (!connected.length) return null;
@@ -145,6 +188,9 @@ export async function uploadFile(account, fileBuffer, filename, mimeType, parent
       supportsAllDrives: false,
     })
   );
+
+  // Invalidate quota cache for this account after upload
+  invalidateQuotaCache(account.accountIndex);
 
   const data = result.data;
   const parent = data.parents?.[0] || null;
@@ -237,6 +283,7 @@ export async function moveFile(account, driveFileId, newParentId, oldParentId = 
 export async function deleteDriveFile(account, driveFileId) {
   const drive = buildService(account);
   await retryOnRateLimit(() => drive.files.delete({ fileId: driveFileId }));
+  invalidateQuotaCache(account.accountIndex);
 }
 
 export async function trashDriveFile(account, driveFileId) {
@@ -244,6 +291,7 @@ export async function trashDriveFile(account, driveFileId) {
   await retryOnRateLimit(() =>
     drive.files.update({ fileId: driveFileId, requestBody: { trashed: true } })
   );
+  invalidateQuotaCache(account.accountIndex);
 }
 
 export async function restoreFile(account, driveFileId) {
@@ -383,7 +431,6 @@ export async function listSharedFolderChildren(account, folderId) {
 export async function removeSharedFile(account, driveFileId) {
   const drive = buildService(account);
 
-  // Step 1: try full delete (succeeds if we are the owner)
   try {
     await retryOnRateLimit(() => drive.files.delete({ fileId: driveFileId }));
     return;
@@ -392,7 +439,6 @@ export async function removeSharedFile(account, driveFileId) {
     if (status !== 403 && status !== 404) throw err;
   }
 
-  // Step 2: trash it (succeeds for editors who are not the owner)
   try {
     await retryOnRateLimit(() =>
       drive.files.update({ fileId: driveFileId, requestBody: { trashed: true } })
@@ -403,7 +449,6 @@ export async function removeSharedFile(account, driveFileId) {
     if (status !== 403) throw err;
   }
 
-  // Step 3: remove own permission via permissionId from about()
   try {
     const about = await retryOnRateLimit(() =>
       drive.about.get({ fields: "user(permissionId)" })
@@ -478,7 +523,7 @@ function parseDriveTime(s) {
 }
 
 export async function syncFilesFromDrives() {
-  const accounts = await DriveAccount.find({ isConnected: true });
+  const accounts = await DriveAccount.find({ isConnected: true }).lean();
   let total = 0;
   for (const account of accounts) {
     try {
@@ -491,32 +536,34 @@ export async function syncFilesFromDrives() {
         driveFileId: { $nin: Array.from(driveIds) },
       });
 
-      for (const df of driveFiles) {
-        const parent = df.parents?.[0] || null;
-        const existing = await File.findOne({
-          driveFileId: df.id,
-          accountIndex: account.accountIndex,
-        });
-        if (existing) {
-          existing.fileName = df.name || existing.fileName;
-          existing.size = parseInt(df.size || "0", 10);
-          existing.thumbnailLink = df.thumbnailLink || null;
-          existing.parentDriveFileId = parent;
-          await existing.save();
-        } else {
-          await File.create({
-            fileName: df.name || "",
-            driveFileId: df.id,
-            accountIndex: account.accountIndex,
-            size: parseInt(df.size || "0", 10),
-            mimeType: df.mimeType || null,
-            thumbnailLink: df.thumbnailLink || null,
-            parentDriveFileId: parent,
-            createdAt: parseDriveTime(df.createdTime),
-          });
-        }
-        total++;
+      // Bulk upsert using bulkWrite for speed
+      if (driveFiles.length > 0) {
+        const ops = driveFiles.map((df) => ({
+          updateOne: {
+            filter: { driveFileId: df.id, accountIndex: account.accountIndex },
+            update: {
+              $set: {
+                fileName: df.name || "",
+                size: parseInt(df.size || "0", 10),
+                mimeType: df.mimeType || null,
+                thumbnailLink: df.thumbnailLink || null,
+                parentDriveFileId: df.parents?.[0] || null,
+              },
+              $setOnInsert: {
+                driveFileId: df.id,
+                accountIndex: account.accountIndex,
+                createdAt: parseDriveTime(df.createdTime),
+              },
+            },
+            upsert: true,
+          },
+        }));
+        await File.bulkWrite(ops, { ordered: false });
       }
+
+      total += driveFiles.length;
+      // Invalidate quota cache after sync so counts stay accurate
+      invalidateQuotaCache(account.accountIndex);
     } catch (err) {
       console.error(`[Sync] Error syncing account ${account.accountIndex}:`, err.message);
     }

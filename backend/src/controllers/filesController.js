@@ -43,11 +43,11 @@ export async function syncFiles(req, res) {
 
 // ── GET /api/files ────────────────────────────────────────────────────────────
 export async function listFiles(req, res) {
-  const connected = await DriveAccount.find({ isConnected: true }).select("accountIndex");
+  const connected = await DriveAccount.find({ isConnected: true }).select("accountIndex").lean();
   const connectedIndices = connected.map((a) => a.accountIndex);
-  const files = await File.find({ accountIndex: { $in: connectedIndices } }).sort({
-    createdAt: -1,
-  });
+  const files = await File.find({ accountIndex: { $in: connectedIndices } })
+    .sort({ createdAt: -1 })
+    .lean();
   return res.json(files.map(fileToDict));
 }
 
