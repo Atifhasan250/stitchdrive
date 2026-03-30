@@ -1,8 +1,8 @@
+import mongoose from "mongoose";
 import DriveAccount from "../models/DriveAccount.js";
 import File from "../models/File.js";
 import {
   deleteDriveFile,
-  downloadFile,
   listSharedFiles,
   listSharedFolderChildren,
   listTrashFiles,
@@ -18,6 +18,12 @@ import {
   unshareFile,
   uploadFile,
 } from "../services/driveService.js";
+
+// ── Helpers ───────────────────────────────────────────────────────────────────
+
+function isValidObjectId(id) {
+  return mongoose.Types.ObjectId.isValid(id);
+}
 
 function fileToDict(f) {
   return {
@@ -63,12 +69,12 @@ export async function upload(req, res) {
   }
 
   const account = await DriveAccount.findOne({ accountIndex: bestIndex });
-  const mimeType =
-    req.file.mimetype ||
-    require("mime-types").lookup(req.file.originalname) ||
-    "application/octet-stream";
 
+  // BUG FIX: removed require("mime-types") which crashes in ES modules.
+  // req.file.mimetype is always set by multer; fallback to octet-stream.
+  const mimeType = req.file.mimetype || "application/octet-stream";
   const parentFolderId = req.body.parent_folder_id || null;
+
   const result = await uploadFile(
     account,
     req.file.buffer,
@@ -92,6 +98,9 @@ export async function upload(req, res) {
 
 // ── GET /api/files/:fileId/download ──────────────────────────────────────────
 export async function getDownload(req, res) {
+  if (!isValidObjectId(req.params.fileId)) {
+    return res.status(404).json({ detail: "File not found" });
+  }
   const file = await File.findById(req.params.fileId);
   if (!file) return res.status(404).json({ detail: "File not found" });
 
@@ -111,6 +120,9 @@ export async function getDownload(req, res) {
 
 // ── GET /api/files/:fileId/view ───────────────────────────────────────────────
 export async function getView(req, res) {
+  if (!isValidObjectId(req.params.fileId)) {
+    return res.status(404).json({ detail: "File not found" });
+  }
   const file = await File.findById(req.params.fileId);
   if (!file) return res.status(404).json({ detail: "File not found" });
 
@@ -130,15 +142,24 @@ export async function getView(req, res) {
 
 // ── PATCH /api/files/:fileId/rename ──────────────────────────────────────────
 export async function rename(req, res) {
-  const { new_name } = req.body;
+  if (!isValidObjectId(req.params.fileId)) {
+    return res.status(404).json({ detail: "File not found" });
+  }
+
+  // BUG FIX: validate new_name before calling Drive API
+  const newName = req.body.new_name?.trim();
+  if (!newName) {
+    return res.status(400).json({ detail: "new_name is required and cannot be empty" });
+  }
+
   const file = await File.findById(req.params.fileId);
   if (!file) return res.status(404).json({ detail: "File not found" });
 
   const account = await DriveAccount.findOne({ accountIndex: file.accountIndex });
   if (!account) return res.status(404).json({ detail: "Account not found" });
 
-  await renameFile(account, file.driveFileId, new_name);
-  file.fileName = new_name;
+  await renameFile(account, file.driveFileId, newName);
+  file.fileName = newName;
   await file.save();
 
   return res.json(fileToDict(file));
@@ -146,7 +167,15 @@ export async function rename(req, res) {
 
 // ── PATCH /api/files/:fileId/move ─────────────────────────────────────────────
 export async function moveFileRoute(req, res) {
+  if (!isValidObjectId(req.params.fileId)) {
+    return res.status(404).json({ detail: "File not found" });
+  }
+
   const { new_parent_drive_file_id } = req.body;
+  if (!new_parent_drive_file_id) {
+    return res.status(400).json({ detail: "new_parent_drive_file_id is required" });
+  }
+
   const file = await File.findById(req.params.fileId);
   if (!file) return res.status(404).json({ detail: "File not found" });
 
@@ -168,6 +197,9 @@ export async function moveFileRoute(req, res) {
 
 // ── POST /api/files/:fileId/share ─────────────────────────────────────────────
 export async function shareFileRoute(req, res) {
+  if (!isValidObjectId(req.params.fileId)) {
+    return res.status(404).json({ detail: "File not found" });
+  }
   const file = await File.findById(req.params.fileId);
   if (!file) return res.status(404).json({ detail: "File not found" });
 
@@ -187,6 +219,9 @@ export async function shareFileRoute(req, res) {
 
 // ── DELETE /api/files/:fileId/share ──────────────────────────────────────────
 export async function unshareFileRoute(req, res) {
+  if (!isValidObjectId(req.params.fileId)) {
+    return res.status(404).json({ detail: "File not found" });
+  }
   const file = await File.findById(req.params.fileId);
   if (!file) return res.status(404).json({ detail: "File not found" });
 
@@ -206,6 +241,9 @@ export async function unshareFileRoute(req, res) {
 
 // ── DELETE /api/files/:fileId ─────────────────────────────────────────────────
 export async function deleteFile(req, res) {
+  if (!isValidObjectId(req.params.fileId)) {
+    return res.status(404).json({ detail: "File not found" });
+  }
   const file = await File.findById(req.params.fileId);
   if (!file) return res.status(404).json({ detail: "File not found" });
 
@@ -223,6 +261,7 @@ export async function deleteFile(req, res) {
 // ── GET /api/files/shared/:accountIndex/:driveFileId/download ─────────────────
 export async function downloadSharedFile(req, res) {
   const accountIndex = parseInt(req.params.accountIndex, 10);
+  if (isNaN(accountIndex)) return res.status(400).json({ detail: "Invalid account index" });
   const { driveFileId } = req.params;
 
   const account = await DriveAccount.findOne({ accountIndex });
@@ -242,6 +281,7 @@ export async function downloadSharedFile(req, res) {
 // ── GET /api/files/shared/:accountIndex/:folderId/children ────────────────────
 export async function listSharedChildren(req, res) {
   const accountIndex = parseInt(req.params.accountIndex, 10);
+  if (isNaN(accountIndex)) return res.status(400).json({ detail: "Invalid account index" });
   const { folderId } = req.params;
 
   const account = await DriveAccount.findOne({ accountIndex });
@@ -270,6 +310,7 @@ export async function listSharedChildren(req, res) {
 // ── DELETE /api/files/shared/:accountIndex/:driveFileId ──────────────────────
 export async function deleteSharedFile(req, res) {
   const accountIndex = parseInt(req.params.accountIndex, 10);
+  if (isNaN(accountIndex)) return res.status(400).json({ detail: "Invalid account index" });
   const { driveFileId } = req.params;
 
   const account = await DriveAccount.findOne({ accountIndex });
@@ -289,15 +330,14 @@ export async function deleteSharedFile(req, res) {
 }
 
 // ── GET /api/files/shared ─────────────────────────────────────────────────────
+// BUG FIX: fetch all accounts in parallel with Promise.allSettled
 export async function listShared(req, res) {
-  const accounts = await DriveAccount.find({ isConnected: true });
-  const results = [];
-  for (const account of accounts) {
-    try {
-      const items = await listSharedFiles(account);
-      results.push(...items);
-    } catch (_) {}
-  }
+  const accounts = await DriveAccount.find({ isConnected: true }).lean();
+  const settled = await Promise.allSettled(accounts.map((acc) => listSharedFiles(acc)));
+  const results = settled
+    .filter((r) => r.status === "fulfilled")
+    .flatMap((r) => r.value);
+
   results.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
   return res.json(
     results.map((i) => ({
@@ -313,15 +353,14 @@ export async function listShared(req, res) {
 }
 
 // ── GET /api/files/trash ──────────────────────────────────────────────────────
+// BUG FIX: fetch all accounts in parallel with Promise.allSettled
 export async function listTrash(req, res) {
-  const accounts = await DriveAccount.find({ isConnected: true });
-  const results = [];
-  for (const account of accounts) {
-    try {
-      const items = await listTrashFiles(account);
-      results.push(...items);
-    } catch (_) {}
-  }
+  const accounts = await DriveAccount.find({ isConnected: true }).lean();
+  const settled = await Promise.allSettled(accounts.map((acc) => listTrashFiles(acc)));
+  const results = settled
+    .filter((r) => r.status === "fulfilled")
+    .flatMap((r) => r.value);
+
   results.sort((a, b) => b.trashedAt.localeCompare(a.trashedAt));
   return res.json(
     results.map((i) => ({
@@ -338,6 +377,7 @@ export async function listTrash(req, res) {
 // ── POST /api/files/trash/:accountIndex/:driveFileId/restore ─────────────────
 export async function restoreTrashFile(req, res) {
   const accountIndex = parseInt(req.params.accountIndex, 10);
+  if (isNaN(accountIndex)) return res.status(400).json({ detail: "Invalid account index" });
   const { driveFileId } = req.params;
 
   const account = await DriveAccount.findOne({ accountIndex });
@@ -356,6 +396,7 @@ export async function restoreTrashFile(req, res) {
 // ── DELETE /api/files/trash/:accountIndex/:driveFileId ───────────────────────
 export async function deleteTrashFile(req, res) {
   const accountIndex = parseInt(req.params.accountIndex, 10);
+  if (isNaN(accountIndex)) return res.status(400).json({ detail: "Invalid account index" });
   const { driveFileId } = req.params;
 
   const account = await DriveAccount.findOne({ accountIndex });

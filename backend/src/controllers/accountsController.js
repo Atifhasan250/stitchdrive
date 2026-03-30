@@ -1,14 +1,18 @@
 import DriveAccount from "../models/DriveAccount.js";
 import File from "../models/File.js";
-import { getAllQuotas } from "../services/driveService.js";
+import {
+  getAllQuotas,
+  invalidateOAuth2Cache,
+  invalidateQuotaCache,
+} from "../services/driveService.js";
 
 // ── GET /api/accounts ─────────────────────────────────────────────────────────
 export async function listAccounts(req, res) {
-  const allAccounts = await DriveAccount.find({ isConnected: true });
-  const quotas = await getAllQuotas(allAccounts);
+  const connectedAccounts = await DriveAccount.find({ isConnected: true }).lean();
+  const quotas = await getAllQuotas(connectedAccounts);
   const connectedIndices = new Set(quotas.map((q) => q.accountIndex));
 
-  const disconnected = await DriveAccount.find({ isConnected: false });
+  const disconnected = await DriveAccount.find({ isConnected: false }).lean();
   for (const acc of disconnected) {
     if (!connectedIndices.has(acc.accountIndex)) {
       quotas.push({
@@ -24,7 +28,7 @@ export async function listAccounts(req, res) {
 
   quotas.sort((a, b) => a.accountIndex - b.accountIndex);
 
-  // Normalise keys to snake_case for frontend compatibility
+  // Return snake_case keys — frontend expects this shape
   return res.json(
     quotas.map((q) => ({
       account_index: q.accountIndex,
@@ -40,6 +44,10 @@ export async function listAccounts(req, res) {
 // ── DELETE /api/accounts/:accountIndex ────────────────────────────────────────
 export async function disconnectAccount(req, res) {
   const accountIndex = parseInt(req.params.accountIndex, 10);
+  if (isNaN(accountIndex)) {
+    return res.status(400).json({ detail: "Invalid account index" });
+  }
+
   const account = await DriveAccount.findOne({ accountIndex });
   if (account) {
     await File.deleteMany({ accountIndex });
@@ -48,6 +56,12 @@ export async function disconnectAccount(req, res) {
     account.accessToken = null;
     account.tokenExpiry = null;
     await account.save();
+
+    // BUG FIX: clear cached OAuth2 client so a re-connect to a different
+    // Google account on the same index slot doesn't reuse the old token
+    invalidateOAuth2Cache(accountIndex);
+    invalidateQuotaCache(accountIndex);
   }
+
   return res.json({ ok: true });
 }

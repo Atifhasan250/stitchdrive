@@ -3,6 +3,8 @@ import "express-async-errors";
 import express from "express";
 import cookieParser from "cookie-parser";
 import cors from "cors";
+import helmet from "helmet";
+import morgan from "morgan";
 
 import { connectDB } from "./db/index.js";
 import { loadSecretsFromDB } from "./utils/configLoader.js";
@@ -17,19 +19,42 @@ import { errorHandler } from "./middlewares/errorHandler.js";
 
 const app = express();
 const PORT = process.env.PORT || 8000;
+const IS_PROD = process.env.NODE_ENV === "production";
 
-// ── Middleware ────────────────────────────────────────────────────────────────
+// ── Security headers ──────────────────────────────────────────────────────────
+app.use(helmet());
+
+// ── Request logger ────────────────────────────────────────────────────────────
+app.use(morgan(IS_PROD ? "combined" : "dev"));
+
+// ── CORS ──────────────────────────────────────────────────────────────────────
+// Hardcoded production origin + whatever FRONTEND_URL env var says (local dev)
+const allowedOrigins = [
+  ...new Set([
+    "http://localhost:3000",
+    "https://atifs-drive.vercel.app",
+    FRONTEND_URL,
+  ].filter(Boolean)),
+];
+
 app.use(
   cors({
-    origin: FRONTEND_URL,
+    origin: (origin, callback) => {
+      // Allow requests with no origin (same-origin, curl, mobile)
+      if (!origin) return callback(null, true);
+      if (allowedOrigins.includes(origin)) return callback(null, true);
+      callback(new Error(`CORS: origin '${origin}' not allowed`));
+    },
     credentials: true,
     methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
     allowedHeaders: ["Content-Type", "Authorization"],
   })
 );
+
+// ── Body parsers ──────────────────────────────────────────────────────────────
 app.use(cookieParser());
-app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
+app.use(express.json({ limit: "1mb" }));
+app.use(express.urlencoded({ extended: true, limit: "1mb" }));
 
 // ── Routes ────────────────────────────────────────────────────────────────────
 app.use("/api/auth", authRoutes);
@@ -43,18 +68,33 @@ app.get("/active", (req, res) => res.json({ status: "active" }));
 // ── Global error handler (must be last) ──────────────────────────────────────
 app.use(errorHandler);
 
+// ── Background periodic sync (every 15 minutes) ───────────────────────────────
+function startPeriodicSync() {
+  const INTERVAL_MS = 15 * 60 * 1000;
+  setInterval(() => {
+    syncFilesFromDrives()
+      .then((total) => console.log(`[Sync] Periodic sync complete — ${total} files indexed.`))
+      .catch((err) => console.error("[Sync] Periodic sync error:", err.message));
+  }, INTERVAL_MS);
+  console.log("[Sync] Periodic sync scheduled every 15 minutes.");
+}
+
 // ── Bootstrap ─────────────────────────────────────────────────────────────────
 async function bootstrap() {
   await connectDB();
   await loadSecretsFromDB();
 
-  // Sync Drive files on startup (non-blocking — same behaviour as Python lifespan)
+  // Initial startup sync (non-blocking)
   syncFilesFromDrives()
     .then((total) => console.log(`[Sync] Startup sync complete — ${total} files indexed.`))
     .catch((err) => console.error("[Sync] Startup sync error:", err.message));
 
+  startPeriodicSync();
+
   app.listen(PORT, "0.0.0.0", () => {
-    console.log(`[Server] DrivePool API running on http://0.0.0.0:${PORT}`);
+    console.log(
+      `[Server] DrivePool API running on http://0.0.0.0:${PORT} (${IS_PROD ? "production" : "development"})`
+    );
   });
 }
 

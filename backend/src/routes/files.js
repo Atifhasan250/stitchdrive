@@ -22,8 +22,13 @@ import {
 } from "../controllers/filesController.js";
 
 const router = Router();
-// Store files in memory (same as Python's in-memory UploadFile)
-const memUpload = multer({ storage: multer.memoryStorage() });
+
+// BUG FIX: added 500MB file size limit — without this a large upload buffers
+// entirely in RAM and can crash the Node process
+const memUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 500 * 1024 * 1024 }, // 500 MB
+});
 
 // ── Static paths first (must come before /:fileId routes) ────────────────────
 router.post("/sync", requireAuth, syncFiles);
