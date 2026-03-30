@@ -25,7 +25,9 @@ function loadClientConfig() {
   return _cachedClientConfig;
 }
 
-// ── OAuth2 client cache (one per account index, rebuilt only when needed) ─────
+// ── OAuth2 client cache ───────────────────────────────────────────────────────
+// One client per account. Pre-warming calls refreshAccessToken() at startup
+// so the first real Drive API call doesn't pay the token exchange round-trip.
 const _oauth2Cache = new Map(); // accountIndex → oauth2Client
 
 function getOAuth2Client(account) {
@@ -47,8 +49,31 @@ export function invalidateOAuth2Cache(accountIndex) {
   _oauth2Cache.delete(accountIndex);
 }
 
-// ── Quota in-memory cache (TTL: 60s — avoids Google API call per page load) ───
-const QUOTA_CACHE_TTL_MS = 60_000;
+// Pre-warm: refresh access tokens for all connected accounts at startup.
+// This means the first user request never pays the token exchange latency.
+export async function preWarmTokens() {
+  try {
+    const accounts = await DriveAccount.find({ isConnected: true }).lean();
+    await Promise.allSettled(
+      accounts.map(async (account) => {
+        try {
+          const client = getOAuth2Client(account);
+          await client.getAccessToken();
+          console.log(`[Warm] Token ready for account ${account.accountIndex} (${account.email})`);
+        } catch (err) {
+          console.warn(`[Warm] Could not pre-warm token for account ${account.accountIndex}:`, err.message);
+        }
+      })
+    );
+  } catch (err) {
+    console.warn("[Warm] Pre-warm skipped:", err.message);
+  }
+}
+
+// ── Quota cache (TTL: 5 minutes) ──────────────────────────────────────────────
+// Increased TTL from 60s to 5 min — quota barely changes in real time.
+// Invalidated explicitly after upload/delete so counts stay accurate.
+const QUOTA_CACHE_TTL_MS = 5 * 60_000;
 const _quotaCache = new Map(); // accountIndex → { data, expiresAt }
 
 function getCachedQuota(accountIndex) {
@@ -156,6 +181,7 @@ export async function getStorageQuota(account) {
 }
 
 export async function getAllQuotas(accounts) {
+  // All accounts fetched in parallel — not sequential
   const results = await Promise.all(accounts.map((acc) => getStorageQuota(acc)));
   return results.sort((a, b) => a.accountIndex - b.accountIndex);
 }
@@ -189,7 +215,7 @@ export async function uploadFile(account, fileBuffer, filename, mimeType, parent
     })
   );
 
-  // Invalidate quota cache for this account after upload
+  // Invalidate quota cache after upload so storage bar updates
   invalidateQuotaCache(account.accountIndex);
 
   const data = result.data;
@@ -530,13 +556,11 @@ export async function syncFilesFromDrives() {
       const driveFiles = await listAllFiles(account);
       const driveIds = new Set(driveFiles.map((f) => f.id));
 
-      // Remove local DB entries that no longer exist on Drive
       await File.deleteMany({
         accountIndex: account.accountIndex,
         driveFileId: { $nin: Array.from(driveIds) },
       });
 
-      // Bulk upsert using bulkWrite for speed
       if (driveFiles.length > 0) {
         const ops = driveFiles.map((df) => ({
           updateOne: {
@@ -562,7 +586,6 @@ export async function syncFilesFromDrives() {
       }
 
       total += driveFiles.length;
-      // Invalidate quota cache after sync so counts stay accurate
       invalidateQuotaCache(account.accountIndex);
     } catch (err) {
       console.error(`[Sync] Error syncing account ${account.accountIndex}:`, err.message);

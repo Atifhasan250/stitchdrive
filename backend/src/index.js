@@ -8,7 +8,7 @@ import morgan from "morgan";
 
 import { connectDB } from "./db/index.js";
 import { loadSecretsFromDB } from "./utils/configLoader.js";
-import { syncFilesFromDrives } from "./services/driveService.js";
+import { syncFilesFromDrives, preWarmTokens } from "./services/driveService.js";
 import { FRONTEND_URL } from "./config/index.js";
 
 import authRoutes from "./routes/auth.js";
@@ -28,7 +28,6 @@ app.use(helmet());
 app.use(morgan(IS_PROD ? "combined" : "dev"));
 
 // ── CORS ──────────────────────────────────────────────────────────────────────
-// Hardcoded production origin + whatever FRONTEND_URL env var says (local dev)
 const allowedOrigins = [
   ...new Set([
     "http://localhost:3000",
@@ -40,7 +39,6 @@ const allowedOrigins = [
 app.use(
   cors({
     origin: (origin, callback) => {
-      // Allow requests with no origin (same-origin, curl, mobile)
       if (!origin) return callback(null, true);
       if (allowedOrigins.includes(origin)) return callback(null, true);
       callback(new Error(`CORS: origin '${origin}' not allowed`));
@@ -84,7 +82,10 @@ async function bootstrap() {
   await connectDB();
   await loadSecretsFromDB();
 
-  // Initial startup sync (non-blocking)
+  // Pre-warm OAuth2 tokens so first user request has no token exchange delay
+  await preWarmTokens();
+
+  // Startup sync (non-blocking — runs in background)
   syncFilesFromDrives()
     .then((total) => console.log(`[Sync] Startup sync complete — ${total} files indexed.`))
     .catch((err) => console.error("[Sync] Startup sync error:", err.message));
