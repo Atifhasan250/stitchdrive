@@ -63,7 +63,14 @@ export default function FilesPage() {
     confirm(`Delete ${selectedItems.size} selected file${selectedItems.size === 1 ? '' : 's'}?`, async () => {
       const tid = toast(`Deleting ${selectedItems.size} items...`, "loading");
       try {
-        const promises = Array.from(selectedItems).map(id => fetch(`/api/files/${id}`, { method: "DELETE", credentials: "include" }));
+        const creds = localStorage.getItem("credentials");
+        const promises = Array.from(selectedItems).map(id => fetch(`/api/files/${id}`, { 
+          method: "DELETE", 
+          headers: { 
+            ...(creds ? { "X-Credentials": creds } : {})
+          },
+          credentials: "include" 
+        }));
         const results = await Promise.allSettled(promises);
         const succeeded = results.filter(r => r.status === "fulfilled" && r.value.ok).length;
         markStatsDirty();
@@ -187,9 +194,13 @@ export default function FilesPage() {
   async function handleRename(id: string, newName: string) {
     const tid = toast("Renaming…", "loading");
     try {
+      const creds = localStorage.getItem("credentials");
       const res = await fetch(`/api/files/${id}/rename`, {
         method: "PATCH",
-        headers: { "Content-Type": "application/json" },
+        headers: { 
+          "Content-Type": "application/json",
+          ...(creds ? { "X-Credentials": creds } : {})
+        },
         body: JSON.stringify({ new_name: newName }),
         credentials: "include",
       });
@@ -203,8 +214,15 @@ export default function FilesPage() {
 
   async function handleDelete(id: string) {
     const tid = toast("Deleting...", "loading");
+    const creds = localStorage.getItem("credentials");
     try {
-      const res = await fetch(`/api/files/${id}`, { method: "DELETE", credentials: "include" });
+      const res = await fetch(`/api/files/${id}`, { 
+        method: "DELETE", 
+        headers: {
+          ...(creds ? { "X-Credentials": creds } : {})
+        },
+        credentials: "include" 
+      });
       if (!res.ok) throw new Error(String(res.status));
       markStatsDirty();
       await refreshFiles();
@@ -217,9 +235,13 @@ export default function FilesPage() {
 
   async function handleMove(fileId: string, targetFolderDriveId: string) {
     async function doMove(label: string, successMsg: string, tid: number) {
+      const creds = localStorage.getItem("credentials");
       const res = await fetch(`/api/files/${fileId}/move`, {
         method: "PATCH",
-        headers: { "Content-Type": "application/json" },
+        headers: { 
+          "Content-Type": "application/json",
+          ...(creds ? { "X-Credentials": creds } : {})
+        },
         body: JSON.stringify({ new_parent_drive_file_id: targetFolderDriveId }),
         credentials: "include",
       });
@@ -248,8 +270,15 @@ export default function FilesPage() {
 
   async function handleShare(file: FileItem) {
     setShareModal({ file, link: null, loading: true, revoking: false });
+    const creds = localStorage.getItem("credentials");
     try {
-      const res = await fetch(`/api/files/${file.id}/share`, { method: "POST", credentials: "include" });
+      const res = await fetch(`/api/files/${file.id}/share`, { 
+        method: "POST", 
+        headers: {
+          ...(creds ? { "X-Credentials": creds } : {})
+        },
+        credentials: "include" 
+      });
       if (!res.ok) throw new Error();
       const data = await res.json();
       setShareModal((prev) => prev ? { ...prev, link: data.link, loading: false } : null);
@@ -262,8 +291,15 @@ export default function FilesPage() {
   async function handleUnshare() {
     if (!shareModal) return;
     setShareModal((prev) => prev ? { ...prev, revoking: true } : null);
+    const creds = localStorage.getItem("credentials");
     try {
-      const res = await fetch(`/api/files/${shareModal.file.id}/share`, { method: "DELETE", credentials: "include" });
+      const res = await fetch(`/api/files/${shareModal.file.id}/share`, { 
+        method: "DELETE", 
+        headers: {
+          ...(creds ? { "X-Credentials": creds } : {})
+        },
+        credentials: "include" 
+      });
       if (!res.ok) throw new Error();
       toast("File is now private", "success");
       setShareModal(null);
@@ -274,8 +310,15 @@ export default function FilesPage() {
   }
 
   async function handleSync() {
+    const creds = localStorage.getItem("credentials");
     setSyncing(true);
-    await fetch("/api/files/sync", { method: "POST", credentials: "include" });
+    await fetch("/api/files/sync", { 
+      method: "POST", 
+      headers: {
+        ...(creds ? { "X-Credentials": creds } : {})
+      },
+      credentials: "include" 
+    });
     await new Promise((r) => setTimeout(r, 1500));
     await refreshFiles();
     setSyncing(false);

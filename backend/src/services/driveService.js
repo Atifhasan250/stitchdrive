@@ -1,5 +1,3 @@
-import fs from "fs";
-import path from "path";
 import { google } from "googleapis";
 import { Readable } from "stream";
 import DriveAccount from "../models/DriveAccount.js";
@@ -10,30 +8,24 @@ import * as config from "../config/index.js";
 const SCOPES = ["https://www.googleapis.com/auth/drive"];
 const PROFILE_FOLDER_NAME = "_DrivePool_";
 
-// ── Credentials file cache (read disk once, reuse forever) ────────────────────
-let _cachedClientConfig = null;
-
-function getCredentialsPath() {
-  return path.join(config.CONFIG_DIR, "credentials.json");
-}
-
-function loadClientConfig() {
-  if (_cachedClientConfig) return _cachedClientConfig;
-  const raw = fs.readFileSync(getCredentialsPath(), "utf8");
-  const parsed = JSON.parse(raw);
-  _cachedClientConfig = parsed.web || parsed.installed;
-  return _cachedClientConfig;
+export function loadClientConfig(credentials = null) {
+  if (!credentials) {
+    throw new Error("Client credentials must be provided by the user.");
+  }
+  const parsed = typeof credentials === "string" ? JSON.parse(credentials) : credentials;
+  return parsed.web || parsed.installed || parsed;
 }
 
 // ── OAuth2 client cache ───────────────────────────────────────────────────────
 // One client per account per user.
 const _oauth2Cache = new Map(); // `${ownerId}_${accountIndex}` → oauth2Client
 
-export function getOAuth2Client(account) {
+export function getOAuth2Client(account, credentials = null) {
   const cacheKey = `${account.ownerId}_${account.accountIndex}`;
   const cached = _oauth2Cache.get(cacheKey);
-  if (cached) return cached;
-  const clientConfig = loadClientConfig();
+  if (cached && !credentials) return cached; // Only uses cache if no custom credentials provided
+
+  const clientConfig = loadClientConfig(credentials);
   const oauth2Client = new google.auth.OAuth2(
     clientConfig.client_id,
     clientConfig.client_secret,
@@ -41,7 +33,10 @@ export function getOAuth2Client(account) {
   );
   const refreshToken = decryptToken(account.refreshToken);
   oauth2Client.setCredentials({ refresh_token: refreshToken });
-  _oauth2Cache.set(cacheKey, oauth2Client);
+  
+  if (!credentials) {
+    _oauth2Cache.set(cacheKey, oauth2Client);
+  }
   return oauth2Client;
 }
 
@@ -96,18 +91,18 @@ async function retryOnRateLimit(fn) {
 
 // ── Build authenticated Drive service ─────────────────────────────────────────
 
-export function buildService(account) {
+export function buildService(account, credentials = null) {
   if (!account.refreshToken) {
     throw new Error(`Account ${account.accountIndex} is not connected (no refresh token)`);
   }
-  const oauth2Client = getOAuth2Client(account);
+  const oauth2Client = getOAuth2Client(account, credentials);
   return google.drive({ version: "v3", auth: oauth2Client });
 }
 
 // ── OAuth flow ────────────────────────────────────────────────────────────────
 
-export function getOAuthFlow(redirectUri) {
-  const clientConfig = loadClientConfig();
+export function getOAuthFlow(redirectUri, credentials = null) {
+  const clientConfig = loadClientConfig(credentials);
   const oauth2Client = new google.auth.OAuth2(
     clientConfig.client_id,
     clientConfig.client_secret,
@@ -128,12 +123,11 @@ export function getAuthUrl(oauth2Client, state) {
 
 // ── Storage quota (cached) ────────────────────────────────────────────────────
 
-export async function getStorageQuota(account) {
+export async function getStorageQuota(account, credentials = null) {
   const cached = getCachedQuota(account.ownerId, account.accountIndex);
-  if (cached) return cached;
-
+  if (cached && !credentials) return cached;
   try {
-    const drive = buildService(account);
+    const drive = buildService(account, credentials);
     const result = await retryOnRateLimit(() =>
       drive.about.get({ fields: "storageQuota" })
     );
@@ -165,15 +159,15 @@ export async function getStorageQuota(account) {
   }
 }
 
-export async function getAllQuotas(accounts) {
+export async function getAllQuotas(accounts, credentials = null) {
   // All accounts fetched in parallel — not sequential
-  const results = await Promise.all(accounts.map((acc) => getStorageQuota(acc)));
+  const results = await Promise.all(accounts.map((acc) => getStorageQuota(acc, credentials)));
   return results.sort((a, b) => a.accountIndex - b.accountIndex);
 }
 
-export async function pickBestAccount(ownerId) {
+export async function pickBestAccount(ownerId, credentials = null) {
   const accounts = await DriveAccount.find({ ownerId, isConnected: true }).lean();
-  const quotas = await getAllQuotas(accounts);
+  const quotas = await getAllQuotas(accounts, credentials);
   const connected = quotas.filter((q) => q.isConnected && q.free > 0);
   if (!connected.length) return null;
   return connected.reduce((best, q) => (q.free > best.free ? q : best)).accountIndex;
@@ -181,8 +175,8 @@ export async function pickBestAccount(ownerId) {
 
 // ── Upload ────────────────────────────────────────────────────────────────────
 
-export async function uploadFile(account, fileBuffer, filename, mimeType, parentFolderId = null) {
-  const drive = buildService(account);
+export async function uploadFile(account, fileBuffer, filename, mimeType, parentFolderId = null, credentials = null) {
+  const drive = buildService(account, credentials);
   const fileMetadata = { name: filename };
   if (parentFolderId) fileMetadata.parents = [parentFolderId];
 
@@ -216,16 +210,16 @@ export async function uploadFile(account, fileBuffer, filename, mimeType, parent
 
 // ── Download / Stream ─────────────────────────────────────────────────────────
 
-export async function downloadFile(account, driveFileId) {
-  const drive = buildService(account);
+export async function downloadFile(account, driveFileId, credentials = null) {
+  const drive = buildService(account, credentials);
   const response = await retryOnRateLimit(() =>
     drive.files.get({ fileId: driveFileId, alt: "media" }, { responseType: "arraybuffer" })
   );
   return Buffer.from(response.data);
 }
 
-export async function* streamFile(account, driveFileId) {
-  const drive = buildService(account);
+export async function* streamFile(account, driveFileId, credentials = null) {
+  const drive = buildService(account, credentials);
   const response = await retryOnRateLimit(() =>
     drive.files.get({ fileId: driveFileId, alt: "media" }, { responseType: "stream" })
   );
@@ -236,8 +230,8 @@ export async function* streamFile(account, driveFileId) {
 
 // ── Rename ────────────────────────────────────────────────────────────────────
 
-export async function renameFile(account, driveFileId, newName) {
-  const drive = buildService(account);
+export async function renameFile(account, driveFileId, newName, credentials = null) {
+  const drive = buildService(account, credentials);
   const result = await retryOnRateLimit(() =>
     drive.files.update({
       fileId: driveFileId,
@@ -250,8 +244,8 @@ export async function renameFile(account, driveFileId, newName) {
 
 // ── Move ──────────────────────────────────────────────────────────────────────
 
-export async function moveFile(account, driveFileId, newParentId, oldParentId = null) {
-  const drive = buildService(account);
+export async function moveFile(account, driveFileId, newParentId, oldParentId = null, credentials = null) {
+  const drive = buildService(account, credentials);
 
   let currentParents = [];
   try {
@@ -291,22 +285,22 @@ export async function moveFile(account, driveFileId, newParentId, oldParentId = 
 
 // ── Delete / Trash / Restore ──────────────────────────────────────────────────
 
-export async function deleteDriveFile(account, driveFileId) {
-  const drive = buildService(account);
+export async function deleteDriveFile(account, driveFileId, credentials = null) {
+  const drive = buildService(account, credentials);
   await retryOnRateLimit(() => drive.files.delete({ fileId: driveFileId }));
   invalidateQuotaCache(account.ownerId, account.accountIndex);
 }
 
-export async function trashDriveFile(account, driveFileId) {
-  const drive = buildService(account);
+export async function trashDriveFile(account, driveFileId, credentials = null) {
+  const drive = buildService(account, credentials);
   await retryOnRateLimit(() =>
     drive.files.update({ fileId: driveFileId, requestBody: { trashed: true } })
   );
   invalidateQuotaCache(account.ownerId, account.accountIndex);
 }
 
-export async function restoreFile(account, driveFileId) {
-  const drive = buildService(account);
+export async function restoreFile(account, driveFileId, credentials = null) {
+  const drive = buildService(account, credentials);
   // 1. Tell Google Drive to restore the file
   await retryOnRateLimit(() =>
     drive.files.update({ fileId: driveFileId, requestBody: { trashed: false } })
@@ -340,8 +334,8 @@ export async function restoreFile(account, driveFileId) {
 
 // ── Trash listing ─────────────────────────────────────────────────────────────
 
-export async function listTrashFiles(account) {
-  const drive = buildService(account);
+export async function listTrashFiles(account, credentials = null) {
+  const drive = buildService(account, credentials);
   const items = [];
   let pageToken = null;
   do {
@@ -369,8 +363,8 @@ export async function listTrashFiles(account) {
 
 // ── Share / Unshare ───────────────────────────────────────────────────────────
 
-export async function shareFile(account, driveFileId) {
-  const drive = buildService(account);
+export async function shareFile(account, driveFileId, credentials = null) {
+  const drive = buildService(account, credentials);
   await retryOnRateLimit(() =>
     drive.permissions.create({
       fileId: driveFileId,
@@ -387,8 +381,8 @@ export async function shareFile(account, driveFileId) {
   );
 }
 
-export async function unshareFile(account, driveFileId) {
-  const drive = buildService(account);
+export async function unshareFile(account, driveFileId, credentials = null) {
+  const drive = buildService(account, credentials);
   const perms = await retryOnRateLimit(() =>
     drive.permissions.list({ fileId: driveFileId, fields: "permissions(id,type)" })
   );
@@ -402,8 +396,8 @@ export async function unshareFile(account, driveFileId) {
 
 // ── Shared-with-me ────────────────────────────────────────────────────────────
 
-export async function listSharedFiles(account) {
-  const drive = buildService(account);
+export async function listSharedFiles(account, credentials = null) {
+  const drive = buildService(account, credentials);
   const items = [];
   let pageToken = null;
   do {
@@ -431,8 +425,8 @@ export async function listSharedFiles(account) {
   return items;
 }
 
-export async function listSharedFolderChildren(account, folderId) {
-  const drive = buildService(account);
+export async function listSharedFolderChildren(account, folderId, credentials = null) {
+  const drive = buildService(account, credentials);
   const items = [];
   let pageToken = null;
   const safeId = sanitizeId(folderId);
@@ -466,8 +460,8 @@ export async function listSharedFolderChildren(account, folderId) {
   });
 }
 
-export async function removeSharedFile(account, driveFileId) {
-  const drive = buildService(account);
+export async function removeSharedFile(account, driveFileId, credentials = null) {
+  const drive = buildService(account, credentials);
 
   try {
     await retryOnRateLimit(() => drive.files.delete({ fileId: driveFileId }));
@@ -512,8 +506,8 @@ export async function removeSharedFile(account, driveFileId) {
 
 // ── Profile folder ────────────────────────────────────────────────────────────
 
-export async function getOrCreateProfileFolder(account) {
-  const drive = buildService(account);
+export async function getOrCreateProfileFolder(account, credentials = null) {
+  const drive = buildService(account, credentials);
   const safeName = PROFILE_FOLDER_NAME.replace(/'/g, "");
   const query = `name='${safeName}' and mimeType='application/vnd.google-apps.folder' and trashed=false`;
   const result = await retryOnRateLimit(() =>
@@ -536,8 +530,8 @@ export async function getOrCreateProfileFolder(account) {
 
 // ── List all owned files (for sync) ──────────────────────────────────────────
 
-export async function listAllFiles(account) {
-  const drive = buildService(account);
+export async function listAllFiles(account, credentials = null) {
+  const drive = buildService(account, credentials);
   const items = [];
   let pageToken = null;
   do {
@@ -561,11 +555,11 @@ function parseDriveTime(s) {
   return new Date(s);
 }
 
-export async function syncFilesFromDrives(ownerId) {
+export async function syncFilesFromDrives(ownerId, credentials = null) {
   const accounts = await DriveAccount.find({ ownerId, isConnected: true }).lean();
   await Promise.allSettled(accounts.map(async (account) => {
     try {
-      const driveFiles = await listAllFiles(account);
+      const driveFiles = await listAllFiles(account, credentials);
       const driveIds = new Set(driveFiles.map((f) => f.id));
 
       await File.deleteMany({

@@ -1,5 +1,6 @@
 "use client";
 
+import { useAuth } from "@clerk/nextjs";
 import { useCallback, useEffect, useState } from "react";
 
 export type FileItem = {
@@ -15,18 +16,30 @@ export type FileItem = {
 };
 
 export function useFiles() {
+  const { getToken } = useAuth();
   const [files, setFiles] = useState<FileItem[]>([]);
 
   const refreshFiles = useCallback(async () => {
     try {
-      const res = await fetch("/api/files", { credentials: "include" });
+      const token = await getToken();
+      const creds = localStorage.getItem("credentials");
+      const headers: Record<string, string> = {
+        Authorization: `Bearer ${token}`,
+      };
+      if (creds) headers["X-Credentials"] = creds;
+
+      const res = await fetch("/api/files", {
+        headers,
+        credentials: "include"
+      });
       if (res.ok) {
         const data = await res.json();
         setFiles(data);
       }
-    } catch {
+    } catch (err) {
+      console.error("[useFiles] Error:", err);
     }
-  }, []);
+  }, [getToken]);
 
   useEffect(() => {
     refreshFiles();

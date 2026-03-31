@@ -4,13 +4,17 @@ import Link from "next/link";
 import { useEffect, useState } from "react";
 import { useFiles } from "@/hooks/useFiles";
 import { useStorage } from "@/hooks/useStorage";
-import {
-  type CachedStats,
-  computeStats,
-  getCachedStats,
-  isStatsDirty,
-  setCachedStats,
-} from "@/hooks/useStats";
+import { type CachedStats, computeStats, getCachedStats, isStatsDirty, setCachedStats } from "@/hooks/useStats";
+import { CredentialsUpload } from "@/components/CredentialsUpload";
+
+type Account = {
+  account_index: number;
+  email: string | null;
+  is_connected: boolean;
+  used: number;
+  limit: number;
+  free: number;
+};
 
 function formatBytes(bytes: number): string {
   if (bytes >= 1e9) return (bytes / 1e9).toFixed(1) + " GB";
@@ -89,6 +93,18 @@ export default function OverviewPage() {
   const { files } = useFiles();
   const [stats, setStats] = useState<CachedStats | null>(null);
   const [fromCache, setFromCache] = useState(false);
+  const [hasCredentials, setHasCredentials] = useState<boolean | null>(null);
+
+  useEffect(() => {
+    const checkCreds = () => {
+      const saved = localStorage.getItem("credentials");
+      setHasCredentials(!!saved);
+    };
+    checkCreds();
+    // Listen for storage changes in other tabs
+    window.addEventListener("storage", checkCreds);
+    return () => window.removeEventListener("storage", checkCreds);
+  }, []);
 
   useEffect(() => {
     if (files.length === 0 && accounts.length === 0) return;
@@ -112,9 +128,9 @@ export default function OverviewPage() {
   }, [files, accounts]);
 
   const s = stats;
-  const connectedAccounts = accounts.filter((a) => a.is_connected);
-  const totalUsed = connectedAccounts.reduce((acc, a) => acc + a.used, 0);
-  const totalLimit = connectedAccounts.reduce((acc, a) => acc + a.limit, 0);
+  const connectedAccounts = accounts.filter((a: Account) => a.is_connected);
+  const totalUsed = connectedAccounts.reduce((acc: number, a: Account) => acc + a.used, 0);
+  const totalLimit = connectedAccounts.reduce((acc: number, a: Account) => acc + a.limit, 0);
   const totalFree = Math.max(0, totalLimit - totalUsed);
   const connectedCount = connectedAccounts.length;
   const recentFiles = files.slice(0, 6);
@@ -122,21 +138,50 @@ export default function OverviewPage() {
   return (
     <div className="space-y-6 animate-fade-up">
       {/* Header */}
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div>
+      <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+        <div className="space-y-1">
           <h1 className="font-display text-2xl text-sd-text">Overview</h1>
-          <p className="mt-1.5 text-sm text-sd-text2 font-medium">Your unified cloud storage at a glance</p>
+          <p className="text-sm text-sd-text2 font-medium">Your unified cloud storage at a glance</p>
+          
+          {fromCache && (
+            <Link
+              href="/dashboard/stats"
+              className="inline-flex mt-2 items-center gap-1.5 rounded-lg border border-sd-border bg-sd-s1/50 px-2.5 py-1 text-[11px] text-sd-text3 font-medium transition hover:border-sd-accent/40 hover:text-sd-text"
+            >
+              <span className="h-1 w-1 rounded-full bg-sd-accent animate-pulse" />
+              Cached · View analytics
+            </Link>
+          )}
         </div>
-        {fromCache && (
-          <Link
-            href="/dashboard/stats"
-            className="flex items-center gap-1.5 rounded-xl border border-sd-border bg-sd-s1 px-3 py-1.5 text-xs text-sd-text2 font-medium transition hover:border-sd-accent/40 hover:text-sd-text shadow-sm"
-          >
-            <span className="h-1.5 w-1.5 rounded-full bg-sd-accent animate-pulse" />
-            Cached · View analytics
-          </Link>
-        )}
+        
+        <div className="flex items-center gap-3">
+          <CredentialsUpload />
+        </div>
       </div>
+
+      {/* Missing Credentials Alert */}
+      {hasCredentials === false && (
+        <div className="relative group overflow-hidden rounded-2xl border border-rose-500/20 bg-rose-500/5 p-4 sm:p-5 transition-all hover:border-rose-500/30">
+          <div className="absolute top-0 left-0 w-1 h-full bg-rose-500/50" />
+          <div className="flex flex-col sm:flex-row sm:items-center gap-4">
+            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-rose-500/10 text-rose-400">
+              <svg className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126ZM12 15.75h.007v.008H12v-.008Z" />
+              </svg>
+            </div>
+            <div className="flex-1 min-w-0">
+              <h3 className="text-sm font-bold text-sd-text">Google Drive Credentials Required</h3>
+              <p className="mt-1 text-sm text-sd-text2 font-medium">Please upload your <code className="text-rose-400 font-mono">credentials.json</code> file to enable cloud storage features. This data is stored locally in your browser and never leaves your device.</p>
+            </div>
+            <button 
+              onClick={() => document.querySelector<HTMLButtonElement>("button[aria-label='Upload Credentials']")?.click()}
+              className="shrink-0 rounded-xl bg-rose-500 px-4 py-2 text-xs font-bold text-white shadow-glow-sm hover:bg-rose-600 transition"
+            >
+              Link Now
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* Stats cards */}
       <div className="grid grid-cols-2 gap-4 xl:grid-cols-4">
@@ -202,7 +247,7 @@ export default function OverviewPage() {
             </div>
           </div>
           <div className="space-y-4 relative z-10">
-            {connectedAccounts.map((a, idx) => {
+            {connectedAccounts.map((a: Account, idx: number) => {
               const pct = a.limit > 0 ? Math.min(100, (a.used / a.limit) * 100) : 0;
               // Cycle through subtle accent colors for each account bar
               const barColors = [

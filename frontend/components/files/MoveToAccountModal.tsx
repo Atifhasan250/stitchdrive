@@ -36,7 +36,12 @@ export default function MoveToAccountModal({
 
     try {
       // 1. Get a temporary access token for the SOURCE account to download directly
-      const tokenRes = await fetch(`/api/accounts/${file.account_index}/token`);
+      const creds = localStorage.getItem("credentials");
+      const tokenRes = await fetch(`/api/accounts/${file.account_index}/token`, {
+        headers: {
+          ...(creds ? { "X-Credentials": creds } : {})
+        }
+      });
       if (!tokenRes.ok) throw new Error("Failed to get source access token");
       const { accessToken } = await tokenRes.json();
 
@@ -70,7 +75,12 @@ export default function MoveToAccountModal({
       await upload(movedFile, null, targetAccountIndex);
 
       // 4. Delete from source
-      await fetch(`/api/files/${file.id}`, { method: "DELETE" });
+      await fetch(`/api/files/${file.id}`, { 
+        method: "DELETE", 
+        headers: {
+          ...(creds ? { "X-Credentials": creds } : {})
+        }
+      });
 
       updateToast(tid, "success", `Moved "${file.file_name}" successfully!`);
       onSuccess();

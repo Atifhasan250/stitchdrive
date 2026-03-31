@@ -49,25 +49,25 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
     currentFolderNameRef.current = folderName ?? null;
   }
 
-  function toast(message: string, type: "loading" | "success" | "error"): number {
+  const toast = useCallback((message: string, type: "loading" | "success" | "error"): number => {
     const id = ++idRef.current;
     setToasts((t) => [...t, { id, message, type }]);
     if (type !== "loading") {
       setTimeout(() => setToasts((t) => t.filter((item) => item.id !== id)), type === "error" ? 5000 : 3000);
     }
     return id;
-  }
+  }, []);
 
-  function updateToast(id: number, type: "success" | "error", message: string) {
+  const updateToast = useCallback((id: number, type: "success" | "error", message: string) => {
     setToasts((t) => t.map((item) => (item.id === id ? { ...item, type, message } : item)));
     setTimeout(() => setToasts((t) => t.filter((item) => item.id !== id)), type === "error" ? 5000 : 3000);
-  }
+  }, []);
 
-  function confirm(
+  const confirm = useCallback((
     message: string,
     onConfirm: () => void,
     opts?: { description?: string; confirmLabel?: string; danger?: boolean },
-  ) {
+  ) => {
     setConfirmState({
       message,
       description: opts?.description,
@@ -75,7 +75,7 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
       danger: opts?.danger ?? false,
       onConfirm,
     });
-  }
+  }, []);
 
   const upload = useCallback(async (file: File | Blob, parentFolderDriveId?: string | null, targetAccountIndex?: number | null) => {
     const id = ++idRef.current;
@@ -92,12 +92,14 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
       const token = await getToken();
       
       // Step 1: Initiate upload session with backend
-      const initRes = await fetch("/api/files/upload/initiate", {
-        method: "POST",
-        headers: { 
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${token}`
-        },
+        const creds = localStorage.getItem("credentials");
+        const initRes = await fetch("/api/files/upload/initiate", {
+          method: "POST",
+          headers: { 
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${token}`,
+            ...(creds ? { "X-Credentials": creds } : {})
+          },
         body: JSON.stringify({
           fileName,
           mimeType: fileType,
@@ -136,11 +138,13 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
             if (!driveFileId) throw new Error("No Drive ID returned from Google");
 
             // Step 3: Finalize metadata in our DB
+            const creds = localStorage.getItem("credentials");
             const finalRes = await fetch("/api/files/upload/finalize", {
               method: "POST",
               headers: { 
                 "Content-Type": "application/json",
-                Authorization: `Bearer ${token}`
+                Authorization: `Bearer ${token}`,
+                ...(creds ? { "X-Credentials": creds } : {})
               },
               body: JSON.stringify({ driveFileId, accountIndex }),
             });

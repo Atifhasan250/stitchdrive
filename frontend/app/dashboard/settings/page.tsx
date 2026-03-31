@@ -1,9 +1,10 @@
 "use client";
 
 import { useAuth, useSignIn } from "@clerk/nextjs";
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useStorage } from "@/hooks/useStorage";
 import { useUpload } from "@/contexts/UploadContext";
+import { useSearchParams, useRouter } from "next/navigation";
 import Link from "next/link";
 
 function formatBytes(bytes: number): string {
@@ -17,6 +18,24 @@ export default function SettingsPage() {
   const { confirm, toast } = useUpload();
   const { getToken } = useAuth();
   const [connecting, setConnecting] = useState(false);
+  const searchParams = useSearchParams();
+  const router = useRouter();
+  const error = searchParams.get("error");
+  const status = searchParams.get("status");
+
+  useEffect(() => {
+    if (error === "account_already_connected") {
+      toast("This Google account is already connected.", "error");
+      router.replace("/dashboard/settings");
+    } else if (error) {
+      toast("Connection failed. Please try again.", "error");
+      router.replace("/dashboard/settings");
+    } else if (status === "success") {
+      toast("Account connected successfully!", "success");
+      refreshStorage();
+      router.replace("/dashboard/settings");
+    }
+  }, [error, status, router, toast, refreshStorage]);
 
   const totalUsed = accounts.reduce((s, a) => s + a.used, 0);
   const totalLimit = accounts.reduce((s, a) => s + a.limit, 0);
@@ -42,8 +61,12 @@ export default function SettingsPage() {
   async function handleConnect(index: number) {
     try {
       const token = await getToken();
+      const creds = localStorage.getItem("credentials");
       const res = await fetch(`/api/accounts/oauth/${index}`, { 
-        headers: { Authorization: `Bearer ${token}` },
+        headers: { 
+          Authorization: `Bearer ${token}`,
+          ...(creds ? { "X-Credentials": creds } : {})
+        },
         credentials: "include" 
       });
       if (!res.ok) throw new Error("Failed to get auth URL");
@@ -60,8 +83,12 @@ export default function SettingsPage() {
     setConnecting(true);
     try {
       const token = await getToken();
+      const creds = localStorage.getItem("credentials");
       const res = await fetch("/api/accounts/oauth/new", { 
-        headers: { Authorization: `Bearer ${token}` },
+        headers: { 
+          Authorization: `Bearer ${token}`,
+          ...(creds ? { "X-Credentials": creds } : {})
+        },
         credentials: "include" 
       });
       if (!res.ok) throw new Error("Failed to initiate connection");

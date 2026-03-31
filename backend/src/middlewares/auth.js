@@ -9,6 +9,16 @@ export function requireAuth(req, res, next) {
   if (clerkAuth?.userId) {
     req.user = { sub: clerkAuth.userId };
     req.ownerId = clerkAuth.userId;
+
+    // Extract optional client-side credentials
+    const creds = req.headers["x-credentials"];
+    if (creds) {
+      try {
+        req.clientCredentials = JSON.parse(creds);
+      } catch (err) {
+        console.warn("[Auth] Failed to parse x-credentials header:", err.message);
+      }
+    }
     return next();
   }
 

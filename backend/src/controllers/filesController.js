@@ -45,7 +45,7 @@ function fileToDict(f) {
 // ── POST /api/files/sync ──────────────────────────────────────────────────────
 export async function syncFiles(req, res) {
   const ownerId = req.ownerId;
-  syncFilesFromDrives(ownerId).catch((err) =>
+  syncFilesFromDrives(ownerId, req.clientCredentials).catch((err) =>
     console.error(`[Sync] Background sync error for ${ownerId}:`, err.message)
   );
   return res.json({ ok: true });
@@ -69,7 +69,7 @@ export async function initiateUpload(req, res) {
   let { accountIndex } = req.body;
 
   if (accountIndex === undefined || accountIndex === null) {
-    accountIndex = await pickBestAccount(ownerId);
+    accountIndex = await pickBestAccount(ownerId, req.clientCredentials);
   }
 
   if (accountIndex === null) {
@@ -80,7 +80,7 @@ export async function initiateUpload(req, res) {
   if (!account) return res.status(404).json({ detail: "Account not found" });
 
   try {
-    const oauth2Client = getOAuth2Client(account);
+    const oauth2Client = getOAuth2Client(account, req.clientCredentials);
     const { token } = await oauth2Client.getAccessToken();
 
     const metadata = { name: fileName };
@@ -121,7 +121,7 @@ export async function finalizeUpload(req, res) {
   if (!account) return res.status(404).json({ detail: "Account not found" });
 
   try {
-    const drive = buildService(account);
+    const drive = buildService(account, req.clientCredentials);
     let result = await drive.files.get({
       fileId: driveFileId,
       fields: "id,name,size,mimeType,thumbnailLink,parents,createdTime",
@@ -206,7 +206,7 @@ export async function getDownload(req, res) {
   res.setHeader("Content-Type", file.mimeType || "application/octet-stream");
 
   try {
-    for await (const chunk of streamFile(account, file.driveFileId)) {
+    for await (const chunk of streamFile(account, file.driveFileId, req.clientCredentials)) {
       res.write(chunk);
     }
     res.end();
@@ -239,7 +239,7 @@ export async function getView(req, res) {
   res.setHeader("Content-Type", file.mimeType || "application/octet-stream");
 
   try {
-    for await (const chunk of streamFile(account, file.driveFileId)) {
+    for await (const chunk of streamFile(account, file.driveFileId, req.clientCredentials)) {
       res.write(chunk);
     }
     res.end();
@@ -271,7 +271,7 @@ export async function rename(req, res) {
   const account = await DriveAccount.findOne({ ownerId, accountIndex: file.accountIndex });
   if (!account) return res.status(404).json({ detail: "Account not found" });
 
-  await renameFile(account, file.driveFileId, newName);
+  await renameFile(account, file.driveFileId, newName, req.clientCredentials);
   file.fileName = newName;
   await file.save();
 
@@ -297,7 +297,7 @@ export async function moveFileRoute(req, res) {
   if (!account) return res.status(404).json({ detail: "Account not found" });
 
   try {
-    await moveFile(account, file.driveFileId, new_parent_drive_file_id, file.parentDriveFileId);
+    await moveFile(account, file.driveFileId, new_parent_drive_file_id, file.parentDriveFileId, req.clientCredentials);
   } catch (err) {
     console.error("[moveFile] Error:", err.message);
     return res.status(503).json({ detail: err.message });
@@ -324,7 +324,7 @@ export async function shareFileRoute(req, res) {
   }
 
   try {
-    const link = await shareFile(account, file.driveFileId);
+    const link = await shareFile(account, file.driveFileId, req.clientCredentials);
     return res.json({ link });
   } catch (err) {
     console.error("[shareFile] Error:", err.message);
@@ -347,7 +347,7 @@ export async function unshareFileRoute(req, res) {
   }
 
   try {
-    await unshareFile(account, file.driveFileId);
+    await unshareFile(account, file.driveFileId, req.clientCredentials);
     return res.status(204).send();
   } catch (err) {
     console.error("[unshareFile] Error:", err.message);
@@ -367,7 +367,7 @@ export async function deleteFile(req, res) {
   const account = await DriveAccount.findOne({ ownerId, accountIndex: file.accountIndex });
   if (account && account.isConnected) {
     try {
-      await trashDriveFile(account, file.driveFileId);
+      await trashDriveFile(account, file.driveFileId, req.clientCredentials);
     } catch (_) {}
   }
 
@@ -392,7 +392,7 @@ export async function downloadSharedFile(req, res) {
   res.setHeader("Content-Type", "application/octet-stream");
 
   try {
-    for await (const chunk of streamFile(account, driveFileId)) {
+    for await (const chunk of streamFile(account, driveFileId, req.clientCredentials)) {
       res.write(chunk);
     }
     res.end();
@@ -419,7 +419,7 @@ export async function listSharedChildren(req, res) {
   }
 
   try {
-    const items = await listSharedFolderChildren(account, folderId);
+    const items = await listSharedFolderChildren(account, folderId, req.clientCredentials);
     return res.json(
       items.map((i) => ({
         drive_file_id: i.driveFileId,
@@ -449,7 +449,7 @@ export async function deleteSharedFile(req, res) {
   }
 
   try {
-    await removeSharedFile(account, driveFileId);
+    await removeSharedFile(account, driveFileId, req.clientCredentials);
     return res.status(204).send();
   } catch (err) {
     if (err.isValidation) {
@@ -463,7 +463,7 @@ export async function deleteSharedFile(req, res) {
 export async function listShared(req, res) {
   const ownerId = req.ownerId;
   const accounts = await DriveAccount.find({ ownerId, isConnected: true }).lean();
-  const settled = await Promise.allSettled(accounts.map((acc) => listSharedFiles(acc)));
+  const settled = await Promise.allSettled(accounts.map((acc) => listSharedFiles(acc, req.clientCredentials)));
   const results = settled
     .filter((r) => r.status === "fulfilled")
     .flatMap((r) => r.value);
@@ -486,7 +486,7 @@ export async function listShared(req, res) {
 export async function listTrash(req, res) {
   const ownerId = req.ownerId;
   const accounts = await DriveAccount.find({ ownerId, isConnected: true }).lean();
-  const settled = await Promise.allSettled(accounts.map((acc) => listTrashFiles(acc)));
+  const settled = await Promise.allSettled(accounts.map((acc) => listTrashFiles(acc, req.clientCredentials)));
   const results = settled
     .filter((r) => r.status === "fulfilled")
     .flatMap((r) => r.value);
@@ -517,7 +517,7 @@ export async function restoreTrashFile(req, res) {
   }
 
   try {
-    await restoreFile(account, driveFileId);
+    await restoreFile(account, driveFileId, req.clientCredentials);
     return res.status(204).send();
   } catch (err) {
     return res.status(500).json({ detail: err.message });
@@ -537,7 +537,7 @@ export async function deleteTrashFile(req, res) {
   }
 
   try {
-    await deleteDriveFile(account, driveFileId);
+    await deleteDriveFile(account, driveFileId, req.clientCredentials);
     return res.status(204).send();
   } catch (err) {
     return res.status(500).json({ detail: err.message });

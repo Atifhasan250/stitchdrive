@@ -67,7 +67,7 @@ function getMimeCategory(mimeType: string | null): string {
 }
 
 type RawFile = {
-  id: number;
+  id: string;
   file_name: string;
   size: number;
   mime_type: string | null;

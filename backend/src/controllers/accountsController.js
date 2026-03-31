@@ -10,6 +10,7 @@ import {
   getOAuthFlow,
   getAuthUrl,
   syncFilesFromDrives,
+  loadClientConfig,
 } from "../services/driveService.js";
 import * as config from "../config/index.js";
 
@@ -17,7 +18,7 @@ import * as config from "../config/index.js";
 export async function listAccounts(req, res) {
   const ownerId = req.ownerId;
   const connectedAccounts = await DriveAccount.find({ ownerId, isConnected: true }).lean();
-  const quotas = await getAllQuotas(connectedAccounts);
+  const quotas = await getAllQuotas(connectedAccounts, req.clientCredentials);
   const connectedIndices = new Set(quotas.map((q) => q.accountIndex));
 
   const disconnected = await DriveAccount.find({ ownerId, isConnected: false }).lean();
@@ -96,7 +97,7 @@ export async function getAccessToken(req, res) {
   }
 
   try {
-    const oauth2Client = getOAuth2Client(account);
+    const oauth2Client = getOAuth2Client(account, req.clientCredentials);
     const { token } = await oauth2Client.getAccessToken();
     return res.json({ accessToken: token });
   } catch (err) {
@@ -123,11 +124,19 @@ export async function getNewOAuthUrl(req, res) {
   await DriveAccount.create({ ownerId, accountIndex: newIndex, isConnected: false });
 
   const redirectUri = config.BACKEND_URL.replace(/\/$/, "") + "/api/accounts/oauth/callback";
-  const oauth2Client = getOAuthFlow(redirectUri);
+  const oauth2Client = getOAuthFlow(redirectUri, req.clientCredentials);
   
   // Encode ownerId and accountIndex in the state
   const state = Buffer.from(JSON.stringify({ ownerId, accountIndex: newIndex })).toString("base64");
   const authUrl = getAuthUrl(oauth2Client, state);
+  if (req.headers["x-credentials"]) {
+    res.cookie("sd_creds", req.headers["x-credentials"], {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === "production",
+      sameSite: "lax",
+      maxAge: 300000, // 5 mins
+    });
+  }
 
   return res.json({ auth_url: authUrl });
 }
@@ -142,10 +151,18 @@ export async function getOAuthUrl(req, res) {
   }
   
   const redirectUri = config.BACKEND_URL.replace(/\/$/, "") + "/api/accounts/oauth/callback";
-  const oauth2Client = getOAuthFlow(redirectUri);
+  const oauth2Client = getOAuthFlow(redirectUri, req.clientCredentials);
   
   const state = Buffer.from(JSON.stringify({ ownerId, accountIndex })).toString("base64");
   const authUrl = getAuthUrl(oauth2Client, state);
+  if (req.headers["x-credentials"]) {
+    res.cookie("sd_creds", req.headers["x-credentials"], {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === "production",
+      sameSite: "lax",
+      maxAge: 300000, // 5 mins
+    });
+  }
   
   return res.json({ auth_url: authUrl });
 }
@@ -153,13 +170,22 @@ export async function getOAuthUrl(req, res) {
 // ── GET /api/accounts/oauth/callback ──────────────────────────────────────────
 export async function oauthCallback(req, res) {
   const { code, state, error } = req.query;
+  const credsCookie = req.cookies?.sd_creds;
+  let clientCredentials = null;
+  if (credsCookie) {
+    try {
+      clientCredentials = JSON.parse(credsCookie);
+    } catch (e) {}
+  }
 
   if (error) {
     console.warn("[OAuth] User denied consent or error returned:", error);
+    res.clearCookie("sd_creds");
     return res.redirect(`${config.FRONTEND_URL}/dashboard/settings?error=oauth_denied`);
   }
 
   if (!code || !state) {
+    res.clearCookie("sd_creds");
     return res.redirect(`${config.FRONTEND_URL}/dashboard/settings?error=oauth_invalid`);
   }
 
@@ -167,6 +193,7 @@ export async function oauthCallback(req, res) {
   try {
     stateObj = JSON.parse(Buffer.from(state, "base64").toString("utf-8"));
   } catch (err) {
+    res.clearCookie("sd_creds");
     return res.redirect(`${config.FRONTEND_URL}/dashboard/settings?error=oauth_invalid`);
   }
 
@@ -174,38 +201,86 @@ export async function oauthCallback(req, res) {
   const ownerId = stateObj.ownerId;
   
   if (isNaN(accountIndex) || !ownerId) {
+    res.clearCookie("sd_creds");
     return res.redirect(`${config.FRONTEND_URL}/dashboard/settings?error=oauth_invalid`);
   }
 
-  const redirectUri = config.BACKEND_URL.replace(/\/$/, "") + "/api/accounts/oauth/callback";
-  const oauth2Client = getOAuthFlow(redirectUri);
-  const { tokens } = await oauth2Client.getToken(code);
-  oauth2Client.setCredentials(tokens);
+  try {
+    const redirectUri = config.BACKEND_URL.replace(/\/$/, "") + "/api/accounts/oauth/callback";
+    const oauth2Client = getOAuthFlow(redirectUri, clientCredentials);
+    const { tokens } = await oauth2Client.getToken(code);
+    oauth2Client.setCredentials(tokens);
 
-  const driveApi = google.drive({ version: "v3", auth: oauth2Client });
-  const about = await driveApi.about.get({ fields: "user" });
-  const email = about.data.user?.emailAddress || "";
+    const driveApi = google.drive({ version: "v3", auth: oauth2Client });
+    const about = await driveApi.about.get({ fields: "user" });
+    const email = about.data.user?.emailAddress || "";
 
-  let account = await DriveAccount.findOne({ ownerId, accountIndex });
-  if (!account) {
-    account = new DriveAccount({ ownerId, accountIndex });
+    // Check if this email is already connected to another slot for this user
+    const existingOther = await DriveAccount.findOne({
+      ownerId,
+      email,
+      accountIndex: { $ne: accountIndex },
+      isConnected: true
+    });
+
+    if (existingOther) {
+      console.warn(`[OAuth] Duplicate account detected: ${email} for owner ${ownerId}`);
+      // If we were creating a NEW slot, let's clean it up since it's a duplicate
+      const attemptAccount = await DriveAccount.findOne({ ownerId, accountIndex });
+      if (attemptAccount && !attemptAccount.isConnected && !attemptAccount.email) {
+        await attemptAccount.deleteOne();
+      }
+      res.clearCookie("sd_creds");
+      return res.redirect(`${config.FRONTEND_URL}/dashboard/settings?error=account_already_connected`);
+    }
+
+    let account = await DriveAccount.findOne({ ownerId, accountIndex });
+    if (!account) {
+      account = new DriveAccount({ ownerId, accountIndex });
+    }
+
+    invalidateOAuth2Cache(ownerId, accountIndex);
+
+    account.email = email;
+    account.isConnected = true;
+
+    if (tokens.refresh_token) {
+      account.refreshToken = encryptToken(tokens.refresh_token);
+    }
+
+    await account.save();
+
+    // Sync in the background for this user
+    syncFilesFromDrives(ownerId, clientCredentials).catch((err) =>
+      console.error("[Sync] Background sync error:", err.message)
+    );
+
+    res.clearCookie("sd_creds");
+    return res.redirect(`${config.FRONTEND_URL}/dashboard/settings?status=success`);
+  } catch (err) {
+    console.error("[OAuth] Callback Processing Error:", err);
+    res.clearCookie("sd_creds");
+    return res.redirect(`${config.FRONTEND_URL}/dashboard/settings?error=oauth_processing_failed`);
+  }
+}
+
+// ── POST /api/accounts/verify-credentials ────────────────────────────────────
+export async function verifyCredentials(req, res) {
+  const creds = req.clientCredentials;
+  if (!creds) {
+    return res.status(400).json({ detail: "No credentials provided in X-Credentials header" });
   }
 
-  invalidateOAuth2Cache(ownerId, accountIndex);
-
-  account.email = email;
-  account.isConnected = true;
-
-  if (tokens.refresh_token) {
-    account.refreshToken = encryptToken(tokens.refresh_token);
+  try {
+    const cfg = loadClientConfig(creds);
+    if (!cfg.client_id || !cfg.client_secret) {
+      throw new Error("Missing client_id or client_secret");
+    }
+    // Basic verification: try to create an OAuth2 client
+    new google.auth.OAuth2(cfg.client_id, cfg.client_secret, cfg.redirect_uris?.[0]);
+    return res.json({ ok: true });
+  } catch (err) {
+    console.warn("[Verify] Invalid credentials provided:", err.message);
+    return res.status(400).json({ detail: "Invalid credentials format: " + err.message });
   }
-
-  await account.save();
-
-  // Sync in the background for this user
-  syncFilesFromDrives(ownerId).catch((err) =>
-    console.error("[Sync] Background sync error:", err.message)
-  );
-
-  return res.redirect(`${config.FRONTEND_URL}/dashboard/settings`);
 }

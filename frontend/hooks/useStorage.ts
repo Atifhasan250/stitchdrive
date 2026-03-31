@@ -19,17 +19,22 @@ export function useStorage() {
   const refreshStorage = useCallback(async () => {
     try {
       const token = await getToken();
+      const creds = localStorage.getItem("credentials");
+      const headers: Record<string, string> = {
+        Authorization: `Bearer ${token}`,
+      };
+      if (creds) headers["X-Credentials"] = creds;
+
       const res = await fetch("/api/accounts", {
-        headers: {
-          Authorization: `Bearer ${token}`,
-        },
+        headers,
         credentials: "include",
       });
       if (res.ok) {
         const data = await res.json();
         setAccounts(data);
       }
-    } catch {
+    } catch (err) {
+      console.error("[useStorage] Error:", err);
     }
   }, [getToken]);
 
