@@ -3,11 +3,10 @@ config/credentials_*.json
 config/credentials.json
 backend/config/credentials.json
 backend/.env
-backend/.env.*
+backend/.env.local
 frontend/.env
-frontend/.env.*
-backend/drivepool.db
-backend/*.db
+frontend/.env.local
+
 
 # ── Python ────────────────────────────────────────────────────────────────────
 __pycache__/
