@@ -1,9 +1,10 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import { useTheme } from "@/contexts/ThemeContext";
-import { useClerk, useUser } from "@clerk/nextjs";
+import { useClerk, useUser, useAuth } from "@clerk/nextjs";
+import { authenticatedFetch } from "@/lib/api";
 
 type ProfileData = { display_name: string | null; bio: string | null; has_avatar: boolean };
 
@@ -19,14 +20,25 @@ export default function Navbar({ onMenuOpen }: { onMenuOpen?: () => void }) {
   const [editName, setEditName] = useState("");
   const [editBio, setEditBio] = useState("");
   const [saving, setSaving] = useState(false);
+  const { getToken } = useAuth();
   const fileRef = useRef<HTMLInputElement>(null);
 
+  const refreshProfile = useCallback(async () => {
+    try {
+      const token = await getToken();
+      const res = await authenticatedFetch("/api/profile", token);
+      if (res.ok) {
+        const d = await res.json();
+        setProfile({ display_name: d.display_name, bio: d.bio, has_avatar: d.has_avatar });
+      }
+    } catch (err) {
+      console.error("[Navbar] Fetch profile error:", err);
+    }
+  }, [getToken]);
+
   useEffect(() => {
-    fetch("/api/profile", { credentials: "include" })
-      .then((r) => (r.ok ? r.json() : null))
-      .then((d) => d && setProfile({ display_name: d.display_name, bio: d.bio, has_avatar: d.has_avatar }))
-      .catch(() => {});
-  }, []);
+    refreshProfile();
+  }, [refreshProfile]);
 
   async function handleSignOut() {
     await signOut({ redirectUrl: "/" });
@@ -40,15 +52,19 @@ export default function Navbar({ onMenuOpen }: { onMenuOpen?: () => void }) {
 
   async function saveProfile() {
     setSaving(true);
-    await fetch("/api/profile", {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ display_name: editName, bio: editBio }),
-      credentials: "include",
-    });
-    setProfile({ display_name: editName || null, bio: editBio || null, has_avatar: profile.has_avatar });
-    setSaving(false);
-    setShowModal(false);
+    try {
+      const token = await getToken();
+      await authenticatedFetch("/api/profile", token, {
+        method: "PUT",
+        body: JSON.stringify({ display_name: editName, bio: editBio }),
+      });
+      setProfile({ display_name: editName || null, bio: editBio || null, has_avatar: profile.has_avatar });
+      setShowModal(false);
+    } catch (err) {
+       console.error("[Navbar] Save profile error:", err);
+    } finally {
+      setSaving(false);
+    }
   }
 
   async function handleAvatarUpload(e: React.ChangeEvent<HTMLInputElement>) {
@@ -56,10 +72,15 @@ export default function Navbar({ onMenuOpen }: { onMenuOpen?: () => void }) {
     if (!file) return;
     const form = new FormData();
     form.append("file", file);
-    await fetch("/api/profile/avatar", { method: "POST", body: form, credentials: "include" });
-    setAvatarKey((k) => k + 1);
-    setAvatarLoaded(false);
-    setProfile((prev) => ({ ...prev, has_avatar: true }));
+    try {
+      const token = await getToken();
+      await authenticatedFetch("/api/profile/avatar", token, { method: "POST", body: form });
+      setAvatarKey((k) => k + 1);
+      setAvatarLoaded(false);
+      setProfile((prev) => ({ ...prev, has_avatar: true }));
+    } catch (err) {
+      console.error("[Navbar] Avatar upload error:", err);
+    }
     e.target.value = "";
   }
 

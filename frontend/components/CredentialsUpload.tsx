@@ -3,6 +3,8 @@
 import { useState, useEffect, useRef } from "react";
 import { useAuth } from "@clerk/nextjs";
 
+import { authenticatedFetch } from "@/lib/api";
+
 type CredentialStatus = "none" | "valid" | "invalid" | "checking";
 
 export function CredentialsUpload() {
@@ -22,13 +24,8 @@ export function CredentialsUpload() {
     setStatus("checking");
     try {
       const token = await getToken();
-      const res = await fetch("/api/accounts/verify-credentials", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${token}`,
-          "X-Credentials": credString,
-        },
+      const res = await authenticatedFetch("/api/accounts/verify-credentials", token, {
+        method: "POST"
       });
 
       if (res.ok) {

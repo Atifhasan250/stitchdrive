@@ -92,8 +92,11 @@ export default function SharedPage() {
   async function handleDownload(file: SharedFile) {
     try {
       const token = await getToken();
-      const path = `/api/files/shared/${file.account_index}/${file.drive_file_id}/download`;
-      await downloadFileAuthenticated(file.drive_file_id, file.file_name, token, path);
+      await downloadFileAuthenticated(file.drive_file_id, file.file_name, token, {
+        accountIndex: file.account_index,
+        driveFileId: file.drive_file_id,
+        customPath: `/api/files/shared/${file.account_index}/${file.drive_file_id}/download`
+      });
     } catch (err: any) {
       alert("Download failed: " + err.message);
     }

@@ -2,6 +2,7 @@
 
 import { useAuth } from "@clerk/nextjs";
 import { createContext, useCallback, useContext, useEffect, useRef, useState } from "react";
+import { authenticatedFetch } from "@/lib/api";
 
 type Snack = { id: number; name: string; progress: number; status: "uploading" | "done" | "error" };
 type Toast = { id: number; message: string; type: "loading" | "success" | "error" };
@@ -115,65 +116,64 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
         throw new Error(errorData.detail || "Failed to initiate upload session");
       }
       const { sessionUrl, accountIndex } = await initRes.json();
+      const fileSize = file.size;
+      const CHUNK_SIZE = 5 * 1024 * 1024; // 5MB chunks
+      let start = 0;
+      let driveFileId = "";
 
-      // Step 2: Upload directly to Google via the Session URI
-      const xhr = new XMLHttpRequest();
-      xhr.open("PUT", sessionUrl);
-      
-      // IMPORTANT: Set content type to match initiation declaration
-      xhr.setRequestHeader("Content-Type", fileType);
-      
-      xhr.upload.onprogress = (e) => {
-        if (e.lengthComputable) {
-          const pct = Math.round((e.loaded / e.total) * 100);
-          setSnacks((s) => s.map((sn) => (sn.id === id ? { ...sn, progress: pct } : sn)));
-        }
-      };
+      while (start < fileSize) {
+        const end = Math.min(start + CHUNK_SIZE, fileSize);
+        const chunk = file.slice(start, end);
+        const contentRange = `bytes ${start}-${end - 1}/${fileSize}`;
 
-      xhr.onload = async () => {
-        console.log(`[Upload] Progress: HTTP ${xhr.status} for "${fileName}"`);
-        if (xhr.status >= 200 && xhr.status < 300) {
-          try {
-            const responseData = JSON.parse(xhr.responseText || "{}");
-            const driveFileId = responseData.id;
+        const uploadChunk = () => new Promise<{ id?: string }>((resolve, reject) => {
+          const xhr = new XMLHttpRequest();
+          xhr.open("PUT", sessionUrl);
+          xhr.setRequestHeader("Content-Range", contentRange);
+          xhr.setRequestHeader("Content-Type", fileType);
 
-            if (!driveFileId) throw new Error("No Drive ID returned from Google");
-
-            // Step 3: Finalize metadata in our DB
-            const creds = localStorage.getItem("credentials");
-            const finalRes = await fetch("/api/files/upload/finalize", {
-              method: "POST",
-              headers: { 
-                "Content-Type": "application/json",
-                Authorization: `Bearer ${token}`,
-                ...(creds ? { "X-Credentials": creds } : {})
-              },
-              body: JSON.stringify({ driveFileId, accountIndex }),
-            });
-
-            if (finalRes.ok) {
-              setSnacks((s) => s.map((sn) => (sn.id === id ? { ...sn, status: "done", progress: 100 } : sn)));
-              listeners.current.forEach((fn) => fn());
-            } else {
-              const err = await finalRes.json().catch(() => ({}));
-              throw new Error(err.detail || "Finalization failed");
+          xhr.upload.onprogress = (e) => {
+            if (e.lengthComputable) {
+              const totalUploaded = start + e.loaded;
+              const pct = Math.round((totalUploaded / fileSize) * 100);
+              setSnacks((s) => s.map((sn) => (sn.id === id ? { ...sn, progress: pct } : sn)));
             }
-          } catch (parseErr: any) {
-             console.error("[Upload] Finalization parsing error:", parseErr);
-             setSnacks((s) => s.map((sn) => (sn.id === id ? { ...sn, status: "error" } : sn)));
-          }
-        } else {
-          console.error(`[Upload] Google API error ${xhr.status}:`, xhr.responseText);
-          setSnacks((s) => s.map((sn) => (sn.id === id ? { ...sn, status: "error" } : sn)));
-        }
-      };
+          };
 
-      xhr.onerror = () => {
-        console.error("[Upload] Network or CORS error during PUT to Google");
-        setSnacks((s) => s.map((sn) => (sn.id === id ? { ...sn, status: "error" } : sn)));
-      };
+          xhr.onload = () => {
+            if (xhr.status === 308) {
+              resolve({});
+            } else if (xhr.status >= 200 && xhr.status < 300) {
+              const data = JSON.parse(xhr.responseText || "{}");
+              resolve({ id: data.id });
+            } else {
+              reject(new Error(`Chunk upload failed with status ${xhr.status}`));
+            }
+          };
+          xhr.onerror = () => reject(new Error("Network error during chunk upload"));
+          xhr.send(chunk);
+        });
 
-      xhr.send(file);
+        const result = await uploadChunk();
+        if (result.id) driveFileId = result.id;
+        start = end;
+      }
+
+      if (!driveFileId) throw new Error("No Drive ID returned from Google after upload");
+
+      // Step 3: Finalize metadata in our DB
+      const finalRes = await authenticatedFetch("/api/files/upload/finalize", token, {
+        method: "POST",
+        body: JSON.stringify({ driveFileId, accountIndex }),
+      });
+
+      if (finalRes.ok) {
+        setSnacks((s) => s.map((sn) => (sn.id === id ? { ...sn, status: "done", progress: 100 } : sn)));
+        listeners.current.forEach((fn) => fn());
+      } else {
+        const err = await finalRes.json().catch(() => ({}));
+        throw new Error(err.detail || "Finalization failed");
+      }
     } catch (err: any) {
       console.error("[Upload] Critical Error:", err.message);
       setSnacks((s) => s.map((sn) => (sn.id === id ? { ...sn, status: "error" } : sn)));

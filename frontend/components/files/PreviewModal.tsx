@@ -50,7 +50,10 @@ export function PreviewModal({ file, onClose }: { file: FileItem; onClose: () =>
   async function handleDownload() {
     try {
       const token = await getToken();
-      await downloadFileAuthenticated(file.id, file.file_name, token);
+      await downloadFileAuthenticated(file.id, file.file_name, token, {
+        accountIndex: file.account_index,
+        driveFileId: file.drive_file_id
+      });
     } catch (err: any) {
       console.error("[Download] Error:", err);
     }

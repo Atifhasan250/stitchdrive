@@ -2,6 +2,7 @@
 
 import { useAuth } from "@clerk/nextjs";
 import { useCallback, useEffect, useState } from "react";
+import { authenticatedFetch } from "@/lib/api";
 
 type Account = {
   account_index: number;
@@ -19,16 +20,7 @@ export function useStorage() {
   const refreshStorage = useCallback(async () => {
     try {
       const token = await getToken();
-      const creds = localStorage.getItem("credentials");
-      const headers: Record<string, string> = {
-        Authorization: `Bearer ${token}`,
-      };
-      if (creds) headers["X-Credentials"] = creds;
-
-      const res = await fetch("/api/accounts", {
-        headers,
-        credentials: "include",
-      });
+      const res = await authenticatedFetch("/api/accounts", token);
       if (res.ok) {
         const data = await res.json();
         setAccounts(data);
