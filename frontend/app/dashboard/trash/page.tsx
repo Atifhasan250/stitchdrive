@@ -1,6 +1,9 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { useAuth } from "@clerk/nextjs";
+import { authenticatedFetch } from "@/lib/api";
+import { formatBytes } from "@/lib/utils";
 import { useUpload } from "@/contexts/UploadContext";
 
 type TrashFile = {
@@ -14,12 +17,7 @@ type TrashFile = {
 
 type SortKey = "name" | "size" | "date";
 
-function formatBytes(bytes: number): string {
-  if (bytes >= 1e9) return (bytes / 1e9).toFixed(1) + " GB";
-  if (bytes >= 1e6) return (bytes / 1e6).toFixed(1) + " MB";
-  if (bytes >= 1e3) return (bytes / 1e3).toFixed(0) + " KB";
-  return bytes + " B";
-}
+
 
 function FileTypeIcon({ mimeType, size = 28 }: { mimeType: string | null; size?: number }) {
   const t = mimeType ?? "";
@@ -48,6 +46,7 @@ function FileTypeIcon({ mimeType, size = 28 }: { mimeType: string | null; size?:
 }
 
 export default function TrashPage() {
+  const { getToken } = useAuth();
   const [files, setFiles] = useState<TrashFile[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
@@ -96,7 +95,8 @@ export default function TrashPage() {
       try {
         const promises = Array.from(currentSelected).map(async (key) => {
           const [acc, fid] = key.split(":");
-          const res = await fetch(`/api/files/trash/${acc}/${fid}/restore`, { method: "POST", credentials: "include" });
+          const token = await getToken();
+          const res = await authenticatedFetch(`/api/files/trash/${acc}/${fid}/restore`, token, { method: "POST" });
           return { key, ok: res.ok || res.status === 204 };
         });
         const results = await Promise.all(promises);
@@ -110,9 +110,9 @@ export default function TrashPage() {
         } else {
            updateToast(tid, "error", `Restored ${succeededKeys.size} of ${currentSelected.size} items`);
         }
-      } catch (err) {
+      } catch (err: any) {
         console.error("[Trash] Bulk restore error:", err);
-        updateToast(tid, "error", "Bulk restore failed");
+        updateToast(tid, "error", err.message || "Bulk restore failed");
       }
     }, { confirmLabel: "Restore" });
   }
@@ -126,7 +126,8 @@ export default function TrashPage() {
       try {
         const promises = Array.from(currentSelected).map(async (key) => {
           const [acc, fid] = key.split(":");
-          const res = await fetch(`/api/files/trash/${acc}/${fid}`, { method: "DELETE", credentials: "include" });
+          const token = await getToken();
+          const res = await authenticatedFetch(`/api/files/trash/${acc}/${fid}`, token, { method: "DELETE" });
           return { key, ok: res.ok || res.status === 204 };
         });
         const results = await Promise.all(promises);
@@ -140,9 +141,9 @@ export default function TrashPage() {
         } else {
            updateToast(tid, "error", `Deleted ${succeededKeys.size} of ${currentSelected.size} items`);
         }
-      } catch (err) {
+      } catch (err: any) {
         console.error("[Trash] Bulk delete error:", err);
-        updateToast(tid, "error", "Bulk delete failed");
+        updateToast(tid, "error", err.message || "Bulk delete failed");
       }
     }, { confirmLabel: "Delete permanently", danger: true });
   }
@@ -150,11 +151,16 @@ export default function TrashPage() {
   const fetchTrash = useCallback(async () => {
     setLoading(true);
     try {
-      const res = await fetch("/api/files/trash", { credentials: "include" });
+      const token = await getToken();
+      const res = await authenticatedFetch("/api/files/trash", token);
       if (res.ok) setFiles(await res.json());
-    } catch {}
+    } catch (err: any) {
+      if (err.message?.includes("credentials")) {
+         toast(err.message, "error");
+      }
+    }
     setLoading(false);
-  }, []);
+  }, [getToken]);
 
   useEffect(() => { fetchTrash(); }, [fetchTrash]);
 
@@ -172,9 +178,11 @@ export default function TrashPage() {
     setActing(key);
     const tid = toast(`Restoring "${file.file_name}"…`, "loading");
     try {
-      const res = await fetch(
+      const token = await getToken();
+      const res = await authenticatedFetch(
         `/api/files/trash/${file.account_index}/${file.drive_file_id}/restore`,
-        { method: "POST", credentials: "include" }
+        token,
+        { method: "POST" }
       );
       if (res.ok || res.status === 204) {
         setFiles((prev) => prev.filter(
@@ -196,9 +204,11 @@ export default function TrashPage() {
     setActing(key);
     const tid = toast(`Deleting "${file.file_name}" permanently…`, "loading");
     try {
-      const res = await fetch(
+      const token = await getToken();
+      const res = await authenticatedFetch(
         `/api/files/trash/${file.account_index}/${file.drive_file_id}`,
-        { method: "DELETE", credentials: "include" }
+        token,
+        { method: "DELETE" }
       );
       if (res.ok || res.status === 204) {
         setFiles((prev) => prev.filter(

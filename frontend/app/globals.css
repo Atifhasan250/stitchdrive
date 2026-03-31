@@ -60,8 +60,16 @@ body {
 ::-webkit-scrollbar-track { background: transparent; }
 ::-webkit-scrollbar-thumb { background-color: var(--sd-border2); border-radius: 2px; }
 
-/* ── Selection ────────────────────────────────────────────── */
-::selection { background: rgba(59,130,246,0.25); color: var(--sd-text); }
+/* ── Selection (Custom Selector) ─────────────────────────── */
+::selection {
+  background: #3b82f6; /* Vibrant Primary Blue highlight */
+  color: #ffffff;      /* High contrast white text */
+}
+
+:root.light ::selection {
+  background: rgba(59, 130, 246, 0.85); /* Solid-ish blue for light mode */
+  color: #ffffff;
+}
 
 /* ── Typography ─────────────────────────────────────────── */
 .font-display { font-family: 'Outfit', sans-serif; }

@@ -82,7 +82,7 @@ async function bootstrap() {
 
   app.listen(PORT, "0.0.0.0", () => {
     console.log(
-      `[Server] DrivePool API running on http://0.0.0.0:${PORT} (${IS_PROD ? "production" : "development"})`
+      `[Server] StitchDrive API running on http://0.0.0.0:${PORT} (${IS_PROD ? "production" : "development"})`
     );
   });
 }

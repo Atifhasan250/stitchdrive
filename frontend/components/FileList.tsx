@@ -1,18 +1,12 @@
 "use client";
 
 import { useState } from "react";
-import FileRow, { FileTypeIcon } from "./FileRow";
+import { useAuth } from "@clerk/nextjs";
+import { authenticatedFetch, downloadFileAuthenticated } from "@/lib/api";
+import FileRow, { FileItem, FileTypeIcon } from "./FileRow";
+import { AuthenticatedThumbnail } from "./AuthenticatedThumbnail";
 
-type FileItem = {
-  id: number;
-  file_name: string;
-  drive_file_id: string;
-  account_index: number;
-  size: number;
-  mime_type: string | null;
-  has_thumbnail: boolean;
-  created_at: string;
-};
+// Re-using FileItem from FileRow
 
 function formatBytes(bytes: number): string {
   if (bytes >= 1e9) return (bytes / 1e9).toFixed(1) + " GB";
@@ -27,9 +21,10 @@ function GridCard({
   onDelete,
 }: {
   file: FileItem;
-  onRename: (id: number, newName: string) => Promise<void>;
-  onDelete: (id: number) => Promise<void>;
+  onRename: (id: string, newName: string) => Promise<void>;
+  onDelete: (id: string) => Promise<void>;
 }) {
+  const { getToken } = useAuth();
   const [editing, setEditing] = useState(false);
   const [editName, setEditName] = useState(file.file_name);
   const [deleting, setDeleting] = useState(false);
@@ -55,11 +50,13 @@ function GridCard({
     await onDelete(file.id);
   }
 
-  function handleDownload() {
-    const a = document.createElement("a");
-    a.href = `/api/files/${file.id}/download`;
-    a.download = file.file_name;
-    a.click();
+  async function handleDownload() {
+    try {
+      const token = await getToken();
+      await downloadFileAuthenticated(file.id, file.file_name, token);
+    } catch (err: any) {
+      alert("Download failed: " + err.message);
+    }
   }
 
   return (
@@ -67,13 +64,10 @@ function GridCard({
       {/* Preview area */}
       <div className="flex h-36 items-center justify-center overflow-hidden rounded-t-xl bg-[#0c0c10]">
         {file.has_thumbnail ? (
-          <img
-            src={`/api/files/${file.id}/thumbnail`}
-            alt=""
+          <AuthenticatedThumbnail 
+            fileId={file.id} 
+            mimeType={file.mime_type} 
             className="h-full w-full object-cover"
-            onError={(e) => {
-              (e.target as HTMLImageElement).style.display = "none";
-            }}
           />
         ) : (
           <FileTypeIcon mimeType={file.mime_type} />
@@ -138,20 +132,22 @@ export default function FileList({
   onRefresh: () => void;
   view?: "list" | "grid";
 }) {
-  async function handleRename(id: number, newName: string) {
-    await fetch(`/api/files/${id}/rename`, {
+  const { getToken } = useAuth();
+
+  async function handleRename(id: string, newName: string) {
+    const token = await getToken();
+    await authenticatedFetch(`/api/files/${id}/rename`, token, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ new_name: newName }),
-      credentials: "include",
     });
     onRefresh();
   }
 
-  async function handleDelete(id: number) {
-    await fetch(`/api/files/${id}`, {
+  async function handleDelete(id: string) {
+    const token = await getToken();
+    await authenticatedFetch(`/api/files/${id}`, token, {
       method: "DELETE",
-      credentials: "include",
     });
     onRefresh();
   }

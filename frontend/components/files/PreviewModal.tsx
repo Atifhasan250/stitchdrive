@@ -1,10 +1,45 @@
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
+import { useAuth } from "@clerk/nextjs";
+import { fetchMediaBlobUrl, downloadFileAuthenticated } from "@/lib/api";
 import type { FileItem } from "@/hooks/useFiles";
 
 export function PreviewModal({ file, onClose }: { file: FileItem; onClose: () => void }) {
+  const { getToken } = useAuth();
+  const [authenticatedUrl, setAuthenticatedUrl] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
+  
   const mime = file.mime_type ?? "";
   const isGoogleWorkspace = mime.startsWith("application/vnd.google-apps.") && mime !== "application/vnd.google-apps.folder";
-  const src = `/api/files/${file.id}/view`;
+
+  useEffect(() => {
+    let active = true;
+    let blobUrl = "";
+
+    async function loadMedia() {
+      if (isGoogleWorkspace) {
+        setLoading(false);
+        return;
+      }
+      try {
+        const token = await getToken();
+        // Use the appropriate view endpoint on the backend
+        blobUrl = await fetchMediaBlobUrl(`/api/files/${file.id}/view`, token);
+        if (active) {
+          setAuthenticatedUrl(blobUrl);
+          setLoading(false);
+        }
+      } catch (err) {
+        console.error("[Preview] Error loading media:", err);
+        if (active) setLoading(false);
+      }
+    }
+
+    loadMedia();
+    return () => {
+      active = false;
+      if (blobUrl) URL.revokeObjectURL(blobUrl);
+    };
+  }, [file.id, getToken, isGoogleWorkspace]);
 
   useEffect(() => {
     function handleKey(e: KeyboardEvent) { if (e.key === "Escape") onClose(); }
@@ -12,7 +47,25 @@ export function PreviewModal({ file, onClose }: { file: FileItem; onClose: () =>
     return () => window.removeEventListener("keydown", handleKey);
   }, [onClose]);
 
+  async function handleDownload() {
+    try {
+      const token = await getToken();
+      await downloadFileAuthenticated(file.id, file.file_name, token);
+    } catch (err: any) {
+      console.error("[Download] Error:", err);
+    }
+  }
+
   function renderContent() {
+    if (loading) {
+       return (
+         <div className="flex flex-col items-center justify-center gap-4 py-32">
+           <div className="h-10 w-10 animate-spin rounded-full border-4 border-sd-accent border-t-transparent" />
+           <p className="text-sm font-medium text-sd-text3">Decrypting media...</p>
+         </div>
+       );
+    }
+
     if (isGoogleWorkspace) {
       return (
         <div className="flex flex-col items-center justify-center gap-4 py-24 text-center">
@@ -37,17 +90,27 @@ export function PreviewModal({ file, onClose }: { file: FileItem; onClose: () =>
         </div>
       );
     }
+
+    if (!authenticatedUrl) {
+       return (
+         <div className="flex flex-col items-center justify-center gap-4 py-24 text-center text-rose-400">
+           <p className="font-semibold">Authentication required to view this file.</p>
+           <button onClick={onClose} className="text-sm underline">Close</button>
+         </div>
+       );
+    }
+
     if (mime.startsWith("image/")) {
       return (
         <div className="flex h-full w-full items-center justify-center p-4">
-          <img src={src} alt={file.file_name} className="max-h-[85vh] max-w-[95vw] rounded-xl object-contain shadow-2xl transition-transform duration-300" />
+          <img src={authenticatedUrl} alt={file.file_name} className="max-h-[85vh] max-w-[95vw] rounded-xl object-contain shadow-2xl transition-transform duration-300" />
         </div>
       );
     }
     if (mime.startsWith("video/")) {
       return (
         <div className="flex h-full w-full items-center justify-center p-4">
-          <video src={src} controls autoPlay className="max-h-[85vh] max-w-[95vw] rounded-xl shadow-2xl" />
+          <video src={authenticatedUrl} controls autoPlay className="max-h-[85vh] max-w-[95vw] rounded-xl shadow-2xl" />
         </div>
       );
     }
@@ -61,7 +124,7 @@ export function PreviewModal({ file, onClose }: { file: FileItem; onClose: () =>
               </svg>
             </div>
             <p className="font-semibold text-lg text-sd-text truncate w-full text-center mb-6">{file.file_name}</p>
-            <audio src={src} controls className="w-full" autoPlay />
+            <audio src={authenticatedUrl} controls className="w-full" autoPlay />
           </div>
         </div>
       );
@@ -70,7 +133,7 @@ export function PreviewModal({ file, onClose }: { file: FileItem; onClose: () =>
       return (
         <div className="h-full w-full p-4 md:p-12 flex justify-center">
           <iframe
-            src={src}
+            src={authenticatedUrl}
             title={file.file_name}
             className="h-full w-full max-w-6xl rounded-xl border border-sd-border bg-white shadow-2xl"
           />
@@ -86,16 +149,15 @@ export function PreviewModal({ file, onClose }: { file: FileItem; onClose: () =>
           <p className="text-lg font-semibold text-sd-text">No preview available</p>
           <p className="mt-1 text-sm text-sd-text3 max-w-sm">This file type cannot be previewed directly in the browser. You'll need to download it.</p>
         </div>
-        <a
-          href={`/api/files/${file.id}/download`}
-          download={file.file_name}
+        <button
+          onClick={handleDownload}
           className="btn-primary flex items-center gap-2 rounded-xl px-6 py-3 text-sm font-semibold transition mt-2"
         >
           <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
             <path strokeLinecap="round" strokeLinejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5M16.5 12 12 16.5m0 0L7.5 12m4.5 4.5V3" />
           </svg>
           Download File
-        </a>
+        </button>
       </div>
     );
   }
@@ -121,16 +183,15 @@ export function PreviewModal({ file, onClose }: { file: FileItem; onClose: () =>
         </div>
         <div className="flex items-center gap-3 pointer-events-auto">
           {!isGoogleWorkspace && (
-            <a
-              href={`/api/files/${file.id}/download`}
-              download={file.file_name}
+            <button
+              onClick={handleDownload}
               className="flex items-center gap-2 rounded-xl bg-white/10 backdrop-blur-md border border-white/20 px-4 py-2 text-sm font-semibold text-white transition hover:bg-white/20 hover:scale-105"
             >
               <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                 <path strokeLinecap="round" strokeLinejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5M16.5 12 12 16.5m0 0L7.5 12m4.5 4.5V3" />
               </svg>
               Download
-            </a>
+            </button>
           )}
           <button
             onClick={onClose}

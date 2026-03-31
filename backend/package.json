@@ -1,7 +1,7 @@
 {
-  "name": "drivepool-backend",
+  "name": "stitchdrive-backend",
   "version": "1.0.0",
-  "description": "DrivePool backend - Node.js/Express rewrite",
+  "description": "StitchDrive backend - Node.js/Express rewrite",
   "main": "src/index.js",
   "type": "module",
   "scripts": {

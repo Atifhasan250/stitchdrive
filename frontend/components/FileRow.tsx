@@ -1,9 +1,12 @@
 "use client";
 
 import { useState } from "react";
+import { useAuth } from "@clerk/nextjs";
+import { downloadFileAuthenticated, fetchMediaBlobUrl } from "@/lib/api";
+import { AuthenticatedThumbnail } from "./AuthenticatedThumbnail";
 
-type FileItem = {
-  id: number;
+export type FileItem = {
+  id: string; // Changed from number to string to match backend ObjectId
   file_name: string;
   drive_file_id: string;
   account_index: number;
@@ -13,12 +16,7 @@ type FileItem = {
   created_at: string;
 };
 
-function formatBytes(bytes: number): string {
-  if (bytes >= 1e9) return (bytes / 1e9).toFixed(1) + " GB";
-  if (bytes >= 1e6) return (bytes / 1e6).toFixed(1) + " MB";
-  if (bytes >= 1e3) return (bytes / 1e3).toFixed(0) + " KB";
-  return bytes + " B";
-}
+import { formatBytes } from "@/lib/utils";
 
 export function FileTypeIcon({ mimeType }: { mimeType: string | null }) {
   const type = mimeType ?? "";
@@ -69,9 +67,10 @@ export default function FileRow({
   onDelete,
 }: {
   file: FileItem;
-  onRename: (id: number, newName: string) => Promise<void>;
-  onDelete: (id: number) => Promise<void>;
+  onRename: (id: string, newName: string) => Promise<void>;
+  onDelete: (id: string) => Promise<void>;
 }) {
+  const { getToken } = useAuth();
   const [editing, setEditing] = useState(false);
   const [editName, setEditName] = useState(file.file_name);
   const [deleting, setDeleting] = useState(false);
@@ -97,11 +96,25 @@ export default function FileRow({
     await onDelete(file.id);
   }
 
-  function handleDownload() {
-    const a = document.createElement("a");
-    a.href = `/api/files/${file.id}/download`;
-    a.download = file.file_name;
-    a.click();
+  async function handleDownload() {
+    try {
+      const token = await getToken();
+      await downloadFileAuthenticated(file.id, file.file_name, token);
+    } catch (err: any) {
+      alert("Download failed: " + err.message);
+    }
+  }
+
+  async function handlePreview() {
+    try {
+      const token = await getToken();
+      const url = await fetchMediaBlobUrl(`/api/files/${file.id}/view`, token);
+      window.open(url, "_blank");
+      // Note: We're opening in a new tab, so we can't easily revoke the URL here without breaking the tab.
+      // In a real app, we'd use a modal previewer.
+    } catch (err: any) {
+      alert("Preview failed: " + err.message);
+    }
   }
 
   return (
@@ -109,12 +122,7 @@ export default function FileRow({
       <td className="px-4 py-3">
         <div className="flex items-center gap-3">
           {file.has_thumbnail ? (
-            <img
-              src={`/api/files/${file.id}/thumbnail`}
-              alt=""
-              className="h-8 w-8 rounded-lg object-cover"
-              onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }}
-            />
+            <AuthenticatedThumbnail fileId={file.id} mimeType={file.mime_type} />
           ) : (
             <FileTypeIcon mimeType={file.mime_type} />
           )}
@@ -156,6 +164,29 @@ export default function FileRow({
           >
             <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
               <path strokeLinecap="round" strokeLinejoin="round" d="M3 16.5v2.25A2.25 2.25 0 0 0 5.25 21h13.5A2.25 2.25 0 0 0 21 18.75V16.5M16.5 12 12 16.5m0 0L7.5 12m4.5 4.5V3" />
+            </svg>
+          </button>
+          
+          {file.mime_type?.startsWith("image/") && (
+            <button
+              onClick={handlePreview}
+              className="rounded-lg p-1.5 text-[#555568] transition hover:bg-[#21212b] hover:text-purple-400"
+              title="Preview Image"
+            >
+              <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M2.036 12.322a1.012 1.012 0 0 1 0-.639C3.423 7.51 7.36 4.5 12 4.5c4.638 0 8.573 3.007 9.963 7.178.07.207.07.431 0 .639C20.577 16.49 16.64 19.5 12 19.5c-4.638 0-8.573-3.007-9.963-7.178Z" />
+                <path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 1 1-6 0 3 3 0 0 1 6 0Z" />
+              </svg>
+            </button>
+          )}
+
+          <button
+            onClick={() => window.open(`https://drive.google.com/open?id=${file.drive_file_id}`, "_blank")}
+            className="rounded-lg p-1.5 text-[#555568] transition hover:bg-[#21212b] hover:text-blue-400"
+            title="Locate in Drive"
+          >
+            <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M13.5 6H5.25A2.25 2.25 0 0 0 3 8.25v10.5A2.25 2.25 0 0 0 5.25 21h10.5A2.25 2.25 0 0 0 18 18.75V10.5m-10.5 6L21 3m0 0h-5.25M21 3v5.25" />
             </svg>
           </button>
           <button

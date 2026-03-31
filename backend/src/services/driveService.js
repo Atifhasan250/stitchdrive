@@ -6,24 +6,31 @@ import { decryptToken } from "./authService.js";
 import * as config from "../config/index.js";
 
 const SCOPES = ["https://www.googleapis.com/auth/drive"];
-const PROFILE_FOLDER_NAME = "_DrivePool_";
+const PROFILE_FOLDER_NAME = "_StitchDrive_";
 
 export function loadClientConfig(credentials = null) {
   if (!credentials) {
-    throw new Error("Client credentials must be provided by the user.");
+    const err = new Error("You have to upload credentials before doing this action.");
+    err.isMissingCredentials = true;
+    err.statusCode = 401;
+    throw err;
   }
   const parsed = typeof credentials === "string" ? JSON.parse(credentials) : credentials;
   return parsed.web || parsed.installed || parsed;
 }
 
 // ── OAuth2 client cache ───────────────────────────────────────────────────────
-// One client per account per user.
-const _oauth2Cache = new Map(); // `${ownerId}_${accountIndex}` → oauth2Client
+// One client per account per user. Using a basic cache to avoid expensive 
+// decryption on every single request (like thumbnails).
+const _oauth2Cache = new Map(); // `${ownerId}_${accountIndex}` → { client, hash }
 
 export function getOAuth2Client(account, credentials = null) {
   const cacheKey = `${account.ownerId}_${account.accountIndex}`;
+  const credsHash = credentials ? JSON.stringify(credentials).length : "default";
   const cached = _oauth2Cache.get(cacheKey);
-  if (cached && !credentials) return cached; // Only uses cache if no custom credentials provided
+
+  // If we have a cached client and credentials haven't changed (or not providing custom ones)
+  if (cached && cached.hash === credsHash) return cached.client;
 
   const clientConfig = loadClientConfig(credentials);
   const oauth2Client = new google.auth.OAuth2(
@@ -31,17 +38,19 @@ export function getOAuth2Client(account, credentials = null) {
     clientConfig.client_secret,
     clientConfig.redirect_uris?.[0]
   );
+  
   const refreshToken = decryptToken(account.refreshToken);
   oauth2Client.setCredentials({ refresh_token: refreshToken });
   
-  if (!credentials) {
-    _oauth2Cache.set(cacheKey, oauth2Client);
-  }
+  // Cache the new client
+  _oauth2Cache.set(cacheKey, { client: oauth2Client, hash: credsHash });
+  
   return oauth2Client;
 }
 
 export function invalidateOAuth2Cache(ownerId, accountIndex) {
-  _oauth2Cache.delete(`${ownerId}_${accountIndex}`);
+  if (ownerId && accountIndex != null) _oauth2Cache.delete(`${ownerId}_${accountIndex}`);
+  else _oauth2Cache.clear();
 }
 
 
@@ -220,9 +229,31 @@ export async function downloadFile(account, driveFileId, credentials = null) {
 
 export async function* streamFile(account, driveFileId, credentials = null) {
   const drive = buildService(account, credentials);
-  const response = await retryOnRateLimit(() =>
-    drive.files.get({ fileId: driveFileId, alt: "media" }, { responseType: "stream" })
-  );
+  
+  // 1. Get MIME type first to determine if we need to EXPORT or GET (media)
+  const meta = await drive.files.get({ fileId: driveFileId, fields: "mimeType" });
+  const mimeType = meta.data.mimeType;
+  const isWorkspace = mimeType.startsWith("application/vnd.google-apps.");
+  const isFolder = mimeType === "application/vnd.google-apps.folder";
+
+  if (isFolder) throw new Error("Folders cannot be streamed directly.");
+
+  let response;
+  if (isWorkspace) {
+    // Determine export format
+    let exportMime = "application/pdf";
+    if (mimeType.includes("spreadsheet")) exportMime = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
+    
+    console.log(`[Drive] Exporting Workspace file (${mimeType}) as ${exportMime}`);
+    response = await retryOnRateLimit(() =>
+      drive.files.export({ fileId: driveFileId, mimeType: exportMime }, { responseType: "stream" })
+    );
+  } else {
+    response = await retryOnRateLimit(() =>
+      drive.files.get({ fileId: driveFileId, alt: "media" }, { responseType: "stream" })
+    );
+  }
+
   for await (const chunk of response.data) {
     yield chunk;
   }
@@ -340,8 +371,9 @@ export async function listTrashFiles(account, credentials = null) {
   let pageToken = null;
   do {
     const params = {
-      q: "'me' in owners and trashed = true",
-      pageSize: 1000,
+      // Fetching all trashed files to ensure completeness, filter by me as primary
+      q: "trashed = true", 
+      pageSize: 100, // Reduced from 1000 to save RAM on free tier
       fields: "nextPageToken, files(id, name, size, mimeType, trashedTime)",
     };
     if (pageToken) params.pageToken = pageToken;
@@ -598,4 +630,39 @@ export async function syncFilesFromDrives(ownerId, credentials = null) {
       console.error(`[Sync] Error syncing account ${account.accountIndex}:`, err.message);
     }
   }));
+}
+export async function cleanupDeletedFiles(ownerId, accountIndex, currentDriveIds) {
+  await File.deleteMany({
+    ownerId,
+    accountIndex,
+    driveFileId: { $nin: currentDriveIds },
+  });
+}
+
+export async function reconcileAccountFiles(ownerId, accountIndex, driveFiles) {
+  if (!driveFiles || driveFiles.length === 0) return;
+
+  const ops = driveFiles.map((df) => ({
+    updateOne: {
+      filter: { driveFileId: df.id, accountIndex: accountIndex },
+      update: {
+        $set: {
+          fileName: df.name || "",
+          size: parseInt(df.size || "0", 10),
+          mimeType: df.mimeType || null,
+          thumbnailLink: df.thumbnailLink || null,
+          parentDriveFileId: df.parents?.[0] || null,
+        },
+        $setOnInsert: {
+          driveFileId: df.id,
+          accountIndex: accountIndex,
+          ownerId: ownerId,
+          createdAt: parseDriveTime(df.createdTime),
+        },
+      },
+      upsert: true,
+    },
+  }));
+
+  await File.bulkWrite(ops, { ordered: false });
 }

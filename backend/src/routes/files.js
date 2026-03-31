@@ -20,12 +20,16 @@ import {
   listTrash,
   restoreTrashFile,
   deleteTrashFile,
+  cleanupFiles,
+  reconcileFiles,
 } from "../controllers/filesController.js";
 
 const router = Router();
 
 // ── Static paths first (must come before /:fileId routes) ────────────────────
 router.post("/sync", requireAuth, syncFiles);
+router.post("/cleanup", requireAuth, cleanupFiles);
+router.post("/reconcile", requireAuth, reconcileFiles);
 router.get("/shared", requireAuth, listShared);
 router.get("/trash", requireAuth, listTrash);
 
@@ -43,8 +47,11 @@ router.get("/", requireAuth, listFiles);
 router.post("/upload/initiate", requireAuth, initiateUpload);
 router.post("/upload/finalize", requireAuth, finalizeUpload);
 router.get("/:fileId/download", requireAuth, getDownload);
+router.post("/:fileId/download", requireAuth, getDownload);
 router.get("/:fileId/view", requireAuth, getView);
+router.post("/:fileId/view", requireAuth, getView);
 router.get("/:fileId/thumbnail", requireAuth, getThumbnail);
+router.post("/:fileId/thumbnail", requireAuth, getThumbnail);
 router.patch("/:fileId/rename", requireAuth, rename);
 router.patch("/:fileId/move", requireAuth, moveFileRoute);
 router.post("/:fileId/share", requireAuth, shareFileRoute);

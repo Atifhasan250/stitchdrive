@@ -2,13 +2,11 @@ import { useState, useRef, useEffect } from "react";
 import type { FileItem } from "@/hooks/useFiles";
 import { useUpload } from "@/contexts/UploadContext";
 import { FileTypeIcon } from "./FileIcons";
+import { downloadFileAuthenticated } from "@/lib/api";
+import { useAuth } from "@clerk/nextjs";
+import { AuthenticatedThumbnail } from "../AuthenticatedThumbnail";
 
-function formatBytes(bytes: number): string {
-  if (bytes >= 1e9) return (bytes / 1e9).toFixed(1) + " GB";
-  if (bytes >= 1e6) return (bytes / 1e6).toFixed(1) + " MB";
-  if (bytes >= 1e3) return (bytes / 1e3).toFixed(0) + " KB";
-  return bytes + " B";
-}
+import { formatBytes } from "@/lib/utils";
 
 export function ActionsMenu({
   file,
@@ -209,6 +207,7 @@ export function GridCard({
   const [dragOver, setDragOver] = useState(false);
   const isFolder = file.mime_type === "application/vnd.google-apps.folder";
   const { confirm } = useUpload();
+  const { getToken } = useAuth();
 
   async function commitRename() {
     const trimmed = editName.trim();
@@ -229,11 +228,13 @@ export function GridCard({
     }, { confirmLabel: "Delete", danger: true });
   }
 
-  function handleDownload() {
-    const a = document.createElement("a");
-    a.href = `/api/files/${file.id}/download`;
-    a.download = file.file_name;
-    a.click();
+  async function handleDownload() {
+    try {
+      const token = await getToken();
+      await downloadFileAuthenticated(file.id, file.file_name, token);
+    } catch (err: any) {
+      console.error("[Download] Error:", err);
+    }
   }
 
   function handleDragStart(e: React.DragEvent) {
@@ -306,24 +307,14 @@ export function GridCard({
           <span className="h-1 w-1 rounded-full bg-emerald-400 mr-1" />
           {file.account_index}
         </span>
-        <div className={`thumbnail-area transform transition duration-300 ${!selectionMode ? "group-hover:-translate-y-1 group-hover:scale-105" : ""}`}>
+        <div className={`thumbnail-area w-full flex justify-center transform transition duration-300 ${!selectionMode ? "group-hover:-translate-y-1 group-hover:scale-105" : ""}`}>
            {file.has_thumbnail ? (
-             <div className="relative h-28 w-28 overflow-hidden rounded-xl bg-sd-s1/50 shadow-inner group-hover:shadow-glow-sm transition-shadow duration-300">
-               <img
-                 src={`/api/files/${file.id}/thumbnail`}
-                 alt={file.file_name}
-                 draggable={false}
-                 className="h-full w-full object-cover select-none transition-opacity duration-500 opacity-0"
-                 onLoad={(e) => (e.currentTarget.style.opacity = "1")}
-                 onError={(e) => {
-                   e.currentTarget.style.display = "none";
-                   const fallback = e.currentTarget.parentElement?.nextElementSibling as HTMLElement;
-                   if (fallback) fallback.style.display = "flex";
-                 }}
+             <div className="relative h-28 w-full overflow-hidden rounded-xl bg-sd-s1/50 shadow-inner group-hover:shadow-glow-sm transition-shadow duration-300">
+               <AuthenticatedThumbnail
+                 fileId={file.id}
+                 mimeType={file.mime_type}
+                 className="h-full w-full object-cover select-none"
                />
-               <div className="absolute inset-0 flex hidden items-center justify-center">
-                 <FileTypeIcon mimeType={file.mime_type} size={52} />
-               </div>
              </div>
            ) : (
              <FileTypeIcon mimeType={file.mime_type} size={52} />
@@ -409,6 +400,7 @@ export function ListRow({
   const [dragOver, setDragOver] = useState(false);
   const isFolder = file.mime_type === "application/vnd.google-apps.folder";
   const { confirm } = useUpload();
+  const { getToken } = useAuth();
 
   async function commitRename() {
     const trimmed = editName.trim();
@@ -429,11 +421,13 @@ export function ListRow({
     }, { confirmLabel: "Delete", danger: true });
   }
 
-  function handleDownload() {
-    const a = document.createElement("a");
-    a.href = `/api/files/${file.id}/download`;
-    a.download = file.file_name;
-    a.click();
+  async function handleDownload() {
+    try {
+      const token = await getToken();
+      await downloadFileAuthenticated(file.id, file.file_name, token);
+    } catch (err: any) {
+      console.error("[Download] Error:", err);
+    }
   }
 
   function handleDragStart(e: React.DragEvent) {

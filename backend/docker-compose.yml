@@ -5,9 +5,9 @@ services:
     image: mongo:7
     restart: unless-stopped
     volumes:
-      - drivepool_mongo:/data/db
+      - stitchdrive_mongo:/data/db
     networks:
-      - drivepool
+      - stitchdrive
 
   backend:
     build:
@@ -17,7 +17,7 @@ services:
     env_file:
       - .env
     environment:
-      MONGO_URI: mongodb://mongo:27017/drivepool
+      MONGO_URI: mongodb://mongo:27017/stitchdrive
       FRONTEND_URL: ${FRONTEND_URL:-http://localhost:3000}
       BACKEND_URL: ${BACKEND_URL:-http://localhost:8000}
       CONFIG_DIR: /config
@@ -28,7 +28,7 @@ services:
     depends_on:
       - mongo
     networks:
-      - drivepool
+      - stitchdrive
 
   frontend:
     build:
@@ -42,10 +42,10 @@ services:
     depends_on:
       - backend
     networks:
-      - drivepool
+      - stitchdrive
 
 volumes:
-  drivepool_mongo:
+  stitchdrive_mongo:
 
 networks:
-  drivepool:
+  stitchdrive:

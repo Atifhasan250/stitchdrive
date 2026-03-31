@@ -1,167 +1,142 @@
-# DrivePool
+# 🪡 StitchDrive
 
-Self-hosted unified dashboard that aggregates multiple Google Drive accounts into a single storage pool. Every upload automatically routes to the account with the most available space — no manual management, no paid tier.
+**Unified Cloud Storage Pooler** — Stitch Drive aggregates multiple free Google Drive accounts into a single, high-performance storage pool. Never worry about reaching the 15GB limit again.
 
-> **Runs entirely on your local machine. Your files stay in your own Google Drive accounts.**
-
----
-
-## Why DrivePool?
-
-Google gives every account **15 GB free**. DrivePool lets you combine as many accounts as you want into one unified interface — effectively giving you N × 15 GB of free cloud storage. Add more accounts at any time without changing any configuration.
+> **Privacy First:** StitchDrive is self-hosted. Your files stay in your own Google accounts, and your credentials never leave your control.
 
 ---
 
-## Features
+## ✨ Features
 
-- **Unified storage pool** — one dashboard for all your Drive accounts
-- **Smart upload routing** — Least-Used-Space strategy picks the best account on every upload
-- **Folder navigation** — full hierarchy, breadcrumbs, grid & list views, search, filters
-- **Drag-to-folder** — drag a file and drop it into any folder from a slide-in panel
-- **Shared with me** — browse and download files others have shared with your accounts
-- **Trash management** — delete goes to Drive trash; restore or permanently delete anytime
-- **Analytics** — storage by account, file type charts, weekly upload activity
-- **Profile** — display name, bio, avatar stored in your own Drive
-- **Secure** — bcrypt-hashed PIN, httponly JWT cookie, OAuth tokens encrypted at rest (AES-256)
-- **No .env needed** — secrets are stored directly in the local MongoDB database
-- **Dark / light theme**
-- **100% open source, $0 cost**
+-   **🌐 Unified Storage Pool:** Combine as many Google accounts as you want into one seamless dashboard (N × 15GB free storage).
+-   **🚀 Smart Upload Routing:** Automatically routes uploads to the account with the most available space using a Least-Used-Space strategy.
+-   **📁 Advanced File Management:** Full folder hierarchy navigation, breadcrumbs, grid/list views, and powerful searching.
+-   **📤 Drag-and-Drop:** Intuitive file uploads and folder organization via a modern, slide-in interface.
+-   **♻️ Smart Trash System:** Safely delete files to Google Drive trash; restore or permanently purge them with a single click.
+-   **📊 Real-time Analytics:** Visual breakdowns of storage usage per account, file type distributions, and activity charts.
+-   **🔒 Secure by Design:**
+    -   **Clerk Authentication:** Enterprise-grade identity management.
+    -   **Client-Side Credentials:** decentralised credential management ensures your Google Cloud secrets are handled securely.
+    -   **Encrypted Tokens:** All OAuth refresh tokens are encrypted at rest using AES-256.
+-   **🎨 Premium UI:** A stunning "glassmorphism" aesthetic with full dark/light mode support and smooth micro-animations.
 
 ---
 
-## Quick Start
+## 🛠️ Tech Stack
 
-**Prerequisites:** Node.js 18+, MongoDB (local or Atlas), at least one Google account
+-   **Frontend:** [Next.js 15](https://nextjs.org/) (App Router), [Tailwind CSS](https://tailwindcss.com/)
+-   **Backend:** [Node.js](https://nodejs.org/) & [Express](https://expressjs.com/)
+-   **Database:** [MongoDB](https://www.mongodb.com/) (Local or Atlas)
+-   **Auth:** [Clerk](https://clerk.com/)
+-   **API:** [Google Drive API v3](https://developers.google.com/drive/api)
 
-### 1. Clone
+---
 
+## 🚀 Quick Start
+
+### 1. Prerequisites
+-   **Node.js 18+** & **npm**
+-   **MongoDB** (running locally or a MongoDB Atlas connection string)
+-   **Clerk Account** (for authentication)
+-   **Google Cloud Project** (for Drive API access)
+
+### 2. Clerk Configuration
+1.  Create a new application in the [Clerk Dashboard](https://dashboard.clerk.com/).
+2.  Enable **Email** and/or **Google** social login.
+3.  Copy your **Publishable Key** and **Secret Key**.
+
+### 3. Google Cloud Setup
+1.  Go to the [Google Cloud Console](https://console.cloud.google.com/).
+2.  Create a new project named `StitchDrive`.
+3.  Enable the **Google Drive API**.
+4.  Configure the **OAuth Consent Screen**:
+    -   User Type: **External**.
+    -   Add yourself (and any other accounts you plan to connect) as **Test Users**.
+5.  Create **OAuth Client ID** (Web Application):
+    -   Authorized Redirect URI: `http://localhost:8000/api/auth/callback`
+6.  Download the JSON credentials file. **Keep this file safe**; you will upload it into the app later.
+
+### 4. Installation & Environment
+
+Clone the repository:
 ```bash
-git clone https://github.com/saimon4u/Drive-Pool.git
-cd DrivePool
+git clone https://github.com/Atifhasan250/stitch-drive.git
+cd stitch-drive
 ```
 
-### 2. Google OAuth credentials
-
-You only need **one Google Cloud project** and one credentials file — no matter how many Drive accounts you add.
-
-1. Go to [Google Cloud Console](https://console.cloud.google.com) → create a new project
-2. Enable **Google Drive API**
-3. Create an OAuth consent screen → choose **External**, fill in any app name, and add **all Google accounts you want to connect** as test users
-4. Create credentials → **OAuth client ID → Web application** → add `http://localhost:8000/api/auth/callback` as an authorized redirect URI → download JSON
-5. Save the file as `config/credentials.json`
-
-> **About the `config/` folder:** It is tracked in git as an empty placeholder (via `.gitkeep`) so it exists right after cloning. Its contents are listed in `.gitignore` — your credentials are **never** accidentally committed. Just drop the downloaded JSON file in as `credentials.json`.
-
-### 3. Install & set up
-
+#### Backend Setup
 ```bash
-cd backend && npm install
-npm run setup
+cd backend
+npm install
+cp .env.example .env
 ```
+Edit `backend/.env`:
+-   `MONGO_URI`: Your MongoDB connection string.
+-   `CLERK_PUBLISHABLE_KEY`: Your Clerk keys.
+-   `CLERK_SECRET_KEY`: Your Clerk keys.
 
-Enter a PIN when prompted — your PIN hash, JWT secret, and encryption key are written directly to your MongoDB database. No `.env` file needed.
-
-### 4. Start the servers
-
+#### Frontend Setup
 ```bash
-# Terminal 1 — backend
+cd ../frontend
+npm install
+cp .env.example .env
+```
+Edit `frontend/.env`:
+-   `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY`: Your Clerk keys.
+-   `CLERK_SECRET_KEY`: Your Clerk keys.
+-   `NEXT_PUBLIC_API_URL`: `http://localhost:8000`
+
+### 5. Running the Application
+
+Open two terminal windows:
+
+**Terminal 1 (Backend):**
+```bash
+cd backend
 npm run dev
-
-# Terminal 2 — frontend
-cd ../frontend && npm install && npm run dev
 ```
 
-### 5. Connect your accounts
+**Terminal 2 (Frontend):**
+```bash
+cd frontend
+npm run dev
+```
 
-Open [http://localhost:3000](http://localhost:3000), log in with your PIN, navigate to **Settings**, and click **Connect another account**. Google will show the account chooser — pick any Google account you want to add to the pool.
-
-That's it — start uploading at [http://localhost:3000/dashboard](http://localhost:3000/dashboard).
+Visit [http://localhost:3000](http://localhost:3000) to get started!
 
 ---
 
-## Docker
+## 📖 Usage Guide
 
-Docker Compose is the easiest way to run DrivePool without installing Python or Node.js locally.
+1.  **Login:** Sign up/Login via the Clerk authentication screen.
+2.  **Initialize Credentials:** Upon first login, you will be prompted to upload the `credentials.json` file you downloaded from Google Cloud. This is stored securely in your browser's local context and used for API interaction.
+3.  **Connect Accounts:** Navigate to **Settings** → **Connect another account**. Pick any Google account you want to add to your storage pool.
+4.  **Upload:** Go to the **Dashboard** and start dragging files. StitchDrive will handle the rest!
 
-**Prerequisites:** Docker and Docker Compose
+---
 
-### 1. Place your credentials
+## 🐳 Docker (Experimental)
 
-Save your downloaded Google OAuth JSON file as `config/credentials.json`. The `config/` folder already exists in the repo — just drop the file in.
-
-### 2. Build the images
+A `docker-compose.yml` is provided for containerized deployment. Note that you must still provide the necessary environment variables in the `frontend` and `backend` directories before running:
 
 ```bash
-docker compose build
+docker-compose up --build
 ```
 
-### 3. Initialize secrets (first run only)
+---
 
-```bash
-docker compose run --rm backend npm run setup
-```
+## 🛡️ Security & Privacy
 
-Enter a PIN when prompted. Secrets are written to the `drivepool_data` persistent Docker volume.
-
-### 4. Start the stack
-
-```bash
-docker compose up -d
-```
-
-Open [http://localhost:3000](http://localhost:3000). View logs anytime with `docker compose logs -f`.
-
-### Persistent data
-
-| Data | Storage |
-|------|---------|
-| MongoDB database | `drivepool_data` named Docker volume |
-| Google credentials | `./config/credentials.json` (bind-mounted read-only) |
-
-### Environment variables
-
-All variables have sensible defaults for local use. Override them in `docker-compose.yml` for custom deployments.
-
-| Variable | Default | Purpose |
-|----------|---------|---------|
-| `FRONTEND_URL` | `http://localhost:3000` | Allowed CORS origin for the backend |
-| `BACKEND_URL` | `http://localhost:8000` | Public URL used to build the OAuth callback URI |
-| `MONGO_URI` | `mongodb://localhost:27017/drivepool` | MongoDB connection string |
-| `CONFIG_DIR` | `config/` | Directory containing `credentials.json` |
-
-> **`BACKEND_URL` is important:** DrivePool uses it to construct the OAuth redirect URI sent to Google. The default works for local and Docker deployments. If you put the backend behind a reverse proxy or a different hostname, update this value — and add the new callback URL to your Google Cloud Console authorized redirect URIs.
+-   **Data Ownership:** StitchDrive does not host your files. They reside on Google's infrastructure.
+-   **Local Secrets:** Your `credentials.json` and OAuth tokens are stored and processed using secure, decentralized patterns.
+-   **No Hidden Costs:** Completely open-source and free to use forever.
 
 ---
 
-## Adding more storage
+## 📄 License
 
-Go to **Settings** and click **Connect another account** — no file changes, no restart needed. Make sure the new Google account is added as a test user on the OAuth consent screen first. Each free Google account adds 15 GB to your pool.
-
----
-
-## Security notes
-
-- `config/credentials.json` and your MongoDB instance contain sensitive data — keep them out of version control and back them up securely.
-- OAuth refresh tokens are encrypted with AES-256-CBC before being stored. The encryption key lives in the database alongside the PIN hash and JWT secret.
-- If you expose DrivePool over the internet, put it behind a reverse proxy with HTTPS and update both `FRONTEND_URL` and `BACKEND_URL` accordingly.
+Distributed under the MIT License. See `LICENSE` for more information.
 
 ---
 
-## Tech stack
-
-| Layer | Tech |
-|-------|------|
-| Backend | Node.js · Express · MongoDB · Google Drive API v3 |
-| Frontend | Next.js (App Router) · Tailwind CSS |
-
----
-
-## Full setup guide
-
-See [http://localhost:3000/docs](http://localhost:3000/docs) once the app is running, or read `frontend/app/docs/page.tsx` directly.
-
----
-
-## License
-
-MIT
+Built with ❤️ by [Atif Hasan](https://atifs-info.vercel.app/)

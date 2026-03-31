@@ -1,3 +1,8 @@
+import { formatBytes } from "@/lib/utils";
+import { useAuth } from "@clerk/nextjs";
+import { authenticatedFetch } from "@/lib/api";
+import { useUpload } from "@/contexts/UploadContext";
+
 type Account = {
   account_index: number;
   email: string | null;
@@ -7,11 +12,7 @@ type Account = {
   free: number;
 };
 
-function formatBytes(bytes: number): string {
-  if (bytes >= 1e9) return (bytes / 1e9).toFixed(1) + " GB";
-  if (bytes >= 1e6) return (bytes / 1e6).toFixed(1) + " MB";
-  return (bytes / 1e3).toFixed(0) + " KB";
-}
+
 
 export default function AccountCard({
   account,
@@ -20,14 +21,21 @@ export default function AccountCard({
   account: Account;
   onDisconnect: () => void;
 }) {
+  const { getToken } = useAuth();
+  const { toast } = useUpload();
   const pct = account.limit > 0 ? Math.min(100, (account.used / account.limit) * 100) : 0;
 
   async function handleDisconnect() {
-    await fetch(`/api/accounts/${account.account_index}`, {
-      method: "DELETE",
-      credentials: "include",
-    });
-    onDisconnect();
+    try {
+      const token = await getToken();
+      const res = await authenticatedFetch(`/api/accounts/${account.account_index}`, token, {
+        method: "DELETE"
+      });
+      if (res.ok) onDisconnect();
+    } catch (err: any) {
+      console.error("[AccountCard] Disconnect error:", err);
+      toast(err.message || "Failed to disconnect account", "error");
+    }
   }
 
   async function handleConnect() {

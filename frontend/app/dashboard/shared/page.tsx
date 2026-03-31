@@ -1,6 +1,8 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { useAuth } from "@clerk/nextjs";
+import { authenticatedFetch, downloadFileAuthenticated, fetchMediaBlobUrl } from "@/lib/api";
 
 type SharedFile = {
   drive_file_id: string;
@@ -20,12 +22,7 @@ type FolderEntry = {
 
 type SortKey = "name" | "size" | "date";
 
-function formatBytes(bytes: number): string {
-  if (bytes >= 1e9) return (bytes / 1e9).toFixed(1) + " GB";
-  if (bytes >= 1e6) return (bytes / 1e6).toFixed(1) + " MB";
-  if (bytes >= 1e3) return (bytes / 1e3).toFixed(0) + " KB";
-  return bytes + " B";
-}
+import { formatBytes } from "@/lib/utils";
 
 function FileTypeIcon({ mimeType, size = 28 }: { mimeType: string | null; size?: number }) {
   const t = mimeType ?? "";
@@ -54,6 +51,7 @@ function FileTypeIcon({ mimeType, size = 28 }: { mimeType: string | null; size?:
 }
 
 export default function SharedPage() {
+  const { getToken } = useAuth();
   const [files, setFiles] = useState<SharedFile[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
@@ -67,10 +65,11 @@ export default function SharedPage() {
     setLoading(true);
     setSearch("");
     try {
+      const token = await getToken();
       const url = folder
         ? `/api/files/shared/${folder.account_index}/${folder.drive_file_id}/children`
         : "/api/files/shared";
-      const res = await fetch(url, { credentials: "include" });
+      const res = await authenticatedFetch(url, token);
       if (res.ok) setFiles(await res.json());
     } catch {}
     setLoading(false);
@@ -88,6 +87,27 @@ export default function SharedPage() {
   function navigateTo(index: number) {
     if (index < 0) setFolderStack([]);
     else setFolderStack((prev) => prev.slice(0, index + 1));
+  }
+
+  async function handleDownload(file: SharedFile) {
+    try {
+      const token = await getToken();
+      const path = `/api/files/shared/${file.account_index}/${file.drive_file_id}/download`;
+      await downloadFileAuthenticated(file.drive_file_id, file.file_name, token, path);
+    } catch (err: any) {
+      alert("Download failed: " + err.message);
+    }
+  }
+
+  async function handlePreview(file: SharedFile) {
+    try {
+      const token = await getToken();
+      const path = `/api/files/shared/${file.account_index}/${file.drive_file_id}/download`; // Shared preview is basically same as download stream
+      const url = await fetchMediaBlobUrl(path, token);
+      window.open(url, "_blank");
+    } catch (err: any) {
+      alert("Preview failed: " + err.message);
+    }
   }
 
   const isFolder = (f: SharedFile) => f.mime_type === "application/vnd.google-apps.folder";
@@ -263,18 +283,29 @@ export default function SharedPage() {
                 </div>
 
                 {!folder && (
-                  <div className="absolute inset-x-0 bottom-0 top-0 rounded-2xl flex items-center justify-center bg-sd-bg/80 backdrop-blur-sm opacity-0 transition group-hover:opacity-100" onClick={(e) => e.stopPropagation()}>
-                    <a
-                      href={`/api/files/shared/${file.account_index}/${file.drive_file_id}/download`}
+                  <div className="absolute inset-x-0 bottom-0 top-0 rounded-2xl flex items-center justify-center bg-sd-bg/80 backdrop-blur-sm opacity-0 transition group-hover:opacity-100 gap-2" onClick={(e) => e.stopPropagation()}>
+                    <button
+                      onClick={() => handleDownload(file)}
                       className="btn-primary flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-[11px] font-semibold"
                       title="Download"
-                      download={file.file_name}
                     >
                       <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                         <path strokeLinecap="round" strokeLinejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5M16.5 12 12 16.5m0 0L7.5 12m4.5 4.5V3" />
                       </svg>
                       Download
-                    </a>
+                    </button>
+                    {file.mime_type?.startsWith("image/") && (
+                      <button
+                        onClick={() => handlePreview(file)}
+                        className="rounded-lg bg-sd-s2 hover:bg-sd-s3 p-1.5 text-sd-text transition border border-sd-border"
+                        title="Preview"
+                      >
+                        <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                           <path strokeLinecap="round" strokeLinejoin="round" d="M2.036 12.322a1.012 1.012 0 0 1 0-.639C3.423 7.51 7.36 4.5 12 4.5c4.638 0 8.573 3.007 9.963 7.178.07.207.07.431 0 .639C20.577 16.49 16.64 19.5 12 19.5c-4.638 0-8.573-3.007-9.963-7.178Z" />
+                           <path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 1 1-6 0 3 3 0 0 1 6 0Z" />
+                        </svg>
+                      </button>
+                    )}
                   </div>
                 )}
               </div>
@@ -321,16 +352,29 @@ export default function SharedPage() {
                     </td>
                     <td className="px-5 py-3.5 text-right">
                       {!folder && (
-                        <a
-                          href={`/api/files/shared/${file.account_index}/${file.drive_file_id}/download`}
-                          className="inline-flex h-8 w-8 items-center justify-center rounded-lg text-sd-text3 transition hover:bg-sd-accent/10 hover:text-sd-accent shadow-sm border border-transparent hover:border-sd-accent/20"
-                          title="Download"
-                          download={file.file_name}
-                        >
-                          <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                            <path strokeLinecap="round" strokeLinejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5M16.5 12 12 16.5m0 0L7.5 12m4.5 4.5V3" />
-                          </svg>
-                        </a>
+                        <div className="flex items-center justify-end gap-2">
+                           {file.mime_type?.startsWith("image/") && (
+                             <button
+                               onClick={() => handlePreview(file)}
+                               className="inline-flex h-8 w-8 items-center justify-center rounded-lg text-sd-text3 transition hover:bg-sd-accent/10 hover:text-sd-accent border border-transparent hover:border-sd-accent/20"
+                               title="Preview"
+                             >
+                                <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                                   <path strokeLinecap="round" strokeLinejoin="round" d="M2.036 12.322a1.012 1.012 0 0 1 0-.639C3.423 7.51 7.36 4.5 12 4.5c4.638 0 8.573 3.007 9.963 7.178.07.207.07.431 0 .639C20.577 16.49 16.64 19.5 12 19.5c-4.638 0-8.573-3.007-9.963-7.178Z" />
+                                   <path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 1 1-6 0 3 3 0 0 1 6 0Z" />
+                                </svg>
+                             </button>
+                           )}
+                           <button
+                             onClick={() => handleDownload(file)}
+                             className="inline-flex h-8 w-8 items-center justify-center rounded-lg text-sd-text3 transition hover:bg-sd-accent/10 hover:text-sd-accent shadow-sm border border-transparent hover:border-sd-accent/20"
+                             title="Download"
+                           >
+                             <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                               <path strokeLinecap="round" strokeLinejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5M16.5 12 12 16.5m0 0L7.5 12m4.5 4.5V3" />
+                             </svg>
+                           </button>
+                        </div>
                       )}
                     </td>
                   </tr>

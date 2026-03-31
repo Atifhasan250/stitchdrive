@@ -1,22 +1,27 @@
-# ── Stage 1: Build — install production dependencies ─────────────────────────
+# ── Stage 1: Build ─────────────────────────────────────────────────────────────
 FROM node:20-slim AS builder
 
 WORKDIR /app
 
-COPY package.json package-lock.json* ./
+# Only copy what's needed for installing dependencies
+COPY package*.json ./
 RUN npm ci --omit=dev
 
-# ── Stage 2: Runtime — lean image with only what's needed ────────────────────
+# ── Stage 2: Runtime ──────────────────────────────────────────────────────────
 FROM node:20-slim
 
 WORKDIR /app
 
-# Copy installed node_modules from builder
+# Ensure we have production environment set
+ENV NODE_ENV=production
+
+# Copy production node_modules from builder
 COPY --from=builder /app/node_modules ./node_modules
 
-# Copy source
+# Copy source code
 COPY . .
 
+# Backend listens on 8000
 EXPOSE 8000
 
 CMD ["node", "src/index.js"]

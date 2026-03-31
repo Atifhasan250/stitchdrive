@@ -102,7 +102,8 @@ export async function getAccessToken(req, res) {
     return res.json({ accessToken: token });
   } catch (err) {
     console.error("[Account] Error getting token:", err.message);
-    return res.status(500).json({ detail: err.message });
+    const status = err.message.includes("credentials") ? 401 : 500;
+    return res.status(status).json({ detail: err.message });
   }
 }
 

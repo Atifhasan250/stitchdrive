@@ -3,12 +3,15 @@
 import { useState, useMemo, useRef, useEffect, useCallback } from "react";
 import { useFiles, type FileItem } from "@/hooks/useFiles";
 import { useStorage } from "@/hooks/useStorage";
+import { useSync } from "@/hooks/useSync";
 import { useUpload } from "@/contexts/UploadContext";
 import { markStatsDirty } from "@/hooks/useStats";
 import { GridCard, ListRow } from "@/components/files/FileCards";
 import { PreviewModal } from "@/components/files/PreviewModal";
+import { downloadFileAuthenticated, authenticatedFetch } from "@/lib/api";
 import { FolderDropPanel } from "@/components/files/FolderDropPanel";
 import MoveToAccountModal from "@/components/files/MoveToAccountModal";
+import { useAuth } from "@clerk/nextjs";
 
 type TypeFilter = "all" | "folder" | "image" | "video" | "audio" | "pdf" | "doc" | "sheet" | "archive";
 type SortKey = "date-desc" | "date-asc" | "name-asc" | "name-desc" | "size-desc" | "size-asc";
@@ -17,8 +20,9 @@ type BreadcrumbEntry = { id: string | null; name: string };
 export default function FilesPage() {
   const { files, refreshFiles } = useFiles();
   const { accounts, refreshStorage } = useStorage();
+  const { syncAll, isSyncing, syncError } = useSync();
   const { upload, addCompleteListener, setCurrentFolder, toast, updateToast, confirm } = useUpload();
-  const [syncing, setSyncing] = useState(false);
+  const { getToken } = useAuth();
   const [view, setView] = useState<"list" | "grid">("grid");
   const [breadcrumb, setBreadcrumb] = useState<BreadcrumbEntry[]>([{ id: null, name: "All Files" }]);
   const scrollStack = useRef<number[]>([]);
@@ -63,13 +67,9 @@ export default function FilesPage() {
     confirm(`Delete ${selectedItems.size} selected file${selectedItems.size === 1 ? '' : 's'}?`, async () => {
       const tid = toast(`Deleting ${selectedItems.size} items...`, "loading");
       try {
-        const creds = localStorage.getItem("credentials");
-        const promises = Array.from(selectedItems).map(id => fetch(`/api/files/${id}`, { 
-          method: "DELETE", 
-          headers: { 
-            ...(creds ? { "X-Credentials": creds } : {})
-          },
-          credentials: "include" 
+        const token = await getToken();
+        const promises = Array.from(selectedItems).map(id => authenticatedFetch(`/api/files/${id}`, token, { 
+          method: "DELETE" 
         }));
         const results = await Promise.allSettled(promises);
         const succeeded = results.filter(r => r.status === "fulfilled" && r.value.ok).length;
@@ -82,8 +82,8 @@ export default function FilesPage() {
         } else {
            updateToast(tid, "error", `Deleted ${succeeded} of ${selectedItems.size} items`);
         }
-      } catch {
-        updateToast(tid, "error", "Bulk delete failed");
+      } catch (err: any) {
+        updateToast(tid, "error", err.message || "Bulk delete failed");
       }
     }, { confirmLabel: "Delete", danger: true });
   }
@@ -194,67 +194,59 @@ export default function FilesPage() {
   async function handleRename(id: string, newName: string) {
     const tid = toast("Renaming…", "loading");
     try {
-      const creds = localStorage.getItem("credentials");
-      const res = await fetch(`/api/files/${id}/rename`, {
+      const token = await getToken();
+      const res = await authenticatedFetch(`/api/files/${id}/rename`, token, {
         method: "PATCH",
-        headers: { 
-          "Content-Type": "application/json",
-          ...(creds ? { "X-Credentials": creds } : {})
-        },
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ new_name: newName }),
-        credentials: "include",
       });
       if (!res.ok) throw new Error();
       refreshFiles();
       updateToast(tid, "success", "Renamed");
-    } catch {
-      updateToast(tid, "error", "Rename failed");
+    } catch (err: any) {
+      updateToast(tid, "error", err.message || "Rename failed");
     }
   }
 
   async function handleDelete(id: string) {
     const tid = toast("Deleting...", "loading");
-    const creds = localStorage.getItem("credentials");
     try {
-      const res = await fetch(`/api/files/${id}`, { 
-        method: "DELETE", 
-        headers: {
-          ...(creds ? { "X-Credentials": creds } : {})
-        },
-        credentials: "include" 
+      const token = await getToken();
+      const res = await authenticatedFetch(`/api/files/${id}`, token, { 
+        method: "DELETE"
       });
       if (!res.ok) throw new Error(String(res.status));
       markStatsDirty();
       await refreshFiles();
       refreshStorage();
       updateToast(tid, "success", "Deleted");
-    } catch {
-      updateToast(tid, "error", "Delete failed");
+    } catch (err: any) {
+      updateToast(tid, "error", err.message || "Delete failed");
     }
   }
 
   async function handleMove(fileId: string, targetFolderDriveId: string) {
     async function doMove(label: string, successMsg: string, tid: number) {
-      const creds = localStorage.getItem("credentials");
-      const res = await fetch(`/api/files/${fileId}/move`, {
-        method: "PATCH",
-        headers: { 
-          "Content-Type": "application/json",
-          ...(creds ? { "X-Credentials": creds } : {})
-        },
-        body: JSON.stringify({ new_parent_drive_file_id: targetFolderDriveId }),
-        credentials: "include",
-      });
-      if (!res.ok) {
-        const body = await res.json().catch(() => ({}));
-        const detail = body?.detail ?? "Move failed";
-        const msg = detail.includes("no refresh token") ? "Account not connected — reconnect it from Accounts" : detail;
-        updateToast(tid, "error", msg);
-        return;
+      try {
+        const token = await getToken();
+        const res = await authenticatedFetch(`/api/files/${fileId}/move`, token, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ new_parent_drive_file_id: targetFolderDriveId }),
+        });
+        if (!res.ok) {
+          const body = await res.json().catch(() => ({}));
+          const detail = body?.detail ?? "Move failed";
+          const msg = detail.includes("no refresh token") ? "Account not connected — reconnect it from Accounts" : detail;
+          updateToast(tid, "error", msg);
+          return;
+        }
+        await refreshFiles();
+        updateToast(tid, "success", successMsg);
+      } catch (err: any) {
+        updateToast(tid, "error", err.message || "Move failed");
       }
-      await refreshFiles();
-      updateToast(tid, "success", successMsg);
-    }
+  }
 
     const isToRoot = targetFolderDriveId === "root";
     if (isToRoot) {
@@ -270,20 +262,16 @@ export default function FilesPage() {
 
   async function handleShare(file: FileItem) {
     setShareModal({ file, link: null, loading: true, revoking: false });
-    const creds = localStorage.getItem("credentials");
     try {
-      const res = await fetch(`/api/files/${file.id}/share`, { 
-        method: "POST", 
-        headers: {
-          ...(creds ? { "X-Credentials": creds } : {})
-        },
-        credentials: "include" 
+      const token = await getToken();
+      const res = await authenticatedFetch(`/api/files/${file.id}/share`, token, { 
+        method: "POST"
       });
       if (!res.ok) throw new Error();
       const data = await res.json();
       setShareModal((prev) => prev ? { ...prev, link: data.link, loading: false } : null);
-    } catch {
-      toast("Failed to generate share link", "error");
+    } catch (err: any) {
+      toast(err.message || "Failed to generate share link", "error");
       setShareModal(null);
     }
   }
@@ -291,37 +279,23 @@ export default function FilesPage() {
   async function handleUnshare() {
     if (!shareModal) return;
     setShareModal((prev) => prev ? { ...prev, revoking: true } : null);
-    const creds = localStorage.getItem("credentials");
     try {
-      const res = await fetch(`/api/files/${shareModal.file.id}/share`, { 
-        method: "DELETE", 
-        headers: {
-          ...(creds ? { "X-Credentials": creds } : {})
-        },
-        credentials: "include" 
+      const token = await getToken();
+      const res = await authenticatedFetch(`/api/files/${shareModal.file.id}/share`, token, { 
+        method: "DELETE"
       });
       if (!res.ok) throw new Error();
       toast("File is now private", "success");
       setShareModal(null);
-    } catch {
-      toast("Failed to revoke sharing", "error");
+    } catch (err: any) {
+      toast(err.message || "Failed to revoke sharing", "error");
       setShareModal((prev) => prev ? { ...prev, revoking: false } : null);
     }
   }
 
   async function handleSync() {
-    const creds = localStorage.getItem("credentials");
-    setSyncing(true);
-    await fetch("/api/files/sync", { 
-      method: "POST", 
-      headers: {
-        ...(creds ? { "X-Credentials": creds } : {})
-      },
-      credentials: "include" 
-    });
-    await new Promise((r) => setTimeout(r, 1500));
-    await refreshFiles();
-    setSyncing(false);
+    await syncAll();
+    refreshFiles();
   }
 
   function handleFileInputChange(e: React.ChangeEvent<HTMLInputElement>) {
@@ -507,13 +481,13 @@ export default function FilesPage() {
             <div className="flex flex-wrap items-center gap-2.5">
             <button
               onClick={handleSync}
-              disabled={syncing}
+              disabled={isSyncing}
               className="flex items-center gap-2 rounded-xl border border-sd-border bg-sd-s1 px-4 py-2.5 text-sm font-semibold text-sd-text2 transition hover:text-sd-text hover:bg-sd-hover hover:border-sd-text3 disabled:opacity-50 shadow-sm"
             >
-              <svg className={`h-4 w-4 ${syncing ? "animate-spin text-blue-400" : ""}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <svg className={`h-4 w-4 ${isSyncing ? "animate-spin text-blue-400" : ""}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                 <path strokeLinecap="round" strokeLinejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0 3.181 3.183a8.25 8.25 0 0013.803-3.7M4.031 9.865a8.25 8.25 0 0113.803-3.7l3.181 3.182m0-4.991v4.99" />
               </svg>
-              {syncing ? "Syncing..." : "Sync Drive"}
+              {isSyncing ? "Syncing..." : "Sync Drive"}
             </button>
 
             <button

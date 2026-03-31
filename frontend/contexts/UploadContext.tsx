@@ -14,6 +14,7 @@ interface UploadCtx {
   toast: (message: string, type: "loading" | "success" | "error") => number;
   updateToast: (id: number, type: "success" | "error", message: string) => void;
   confirm: (message: string, onConfirm: () => void, opts?: { description?: string; confirmLabel?: string; danger?: boolean }) => void;
+  moveFile: (file: any, targetAccountIndex: number) => void;
 }
 
 const UploadContext = createContext<UploadCtx>({
@@ -23,6 +24,7 @@ const UploadContext = createContext<UploadCtx>({
   toast: () => 0,
   updateToast: () => {},
   confirm: () => {},
+  moveFile: () => {},
 } as UploadCtx);
 
 export function UploadProvider({ children }: { children: React.ReactNode }) {
@@ -178,6 +180,104 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
     }
   }, [getToken]);
 
+  const moveFile = useCallback(async (file: any, targetAccountIndex: number) => {
+    const id = ++idRef.current;
+    const fileName = file.file_name || file.name;
+    const creds = localStorage.getItem("credentials");
+    
+    setIsManagerMinimized(false);
+    setSnacks((s) => [...s, { id, name: `Preparing: ${fileName}`, progress: 0, status: "uploading" }]);
+
+    try {
+      const token = await getToken();
+
+      // Step 1: Get Source Token
+      setSnacks((s) => s.map((sn) => (sn.id === id ? { ...sn, name: `[1/3] Downloading: ${fileName}` } : sn)));
+      const tokenRes = await fetch(`/api/accounts/${file.account_index}/token`, {
+        headers: { ...(creds ? { "X-Credentials": creds || "" } : {}) }
+      });
+      if (!tokenRes.ok) throw new Error("Source auth failed");
+      const { accessToken } = await tokenRes.json();
+
+      // Step 2: Download directly from Google to Browser
+      const downloadRes = await fetch(`https://www.googleapis.com/drive/v3/files/${file.drive_file_id}?alt=media`, {
+        headers: { Authorization: `Bearer ${accessToken}` }
+      });
+      if (!downloadRes.ok) throw new Error("Download from Google failed");
+      
+      // Track download progress if possible? Fetch doesn't support easily but for simplicity we assume it's fast-ish
+      const blob = await downloadRes.blob();
+
+      // Step 3: Initiate resumable upload to target account
+      setSnacks((s) => s.map((sn) => (sn.id === id ? { ...sn, progress: 30, name: `[2/3] Uploading: ${fileName}` } : sn)));
+      const mimeType = file.mime_type || "application/octet-stream";
+      
+      const initRes = await fetch("/api/files/upload/initiate", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+          ...(creds ? { "X-Credentials": creds } : {})
+        },
+        body: JSON.stringify({ fileName, mimeType, accountIndex: targetAccountIndex }),
+      });
+      if (!initRes.ok) throw new Error("Target upload initiation failed");
+      const { sessionUrl, accountIndex } = await initRes.json();
+
+      // Step 4: Stream upload directly to target account via XHR
+      const xhr = new XMLHttpRequest();
+      xhr.open("PUT", sessionUrl);
+      xhr.setRequestHeader("Content-Type", mimeType);
+      
+      const uploadPromise = new Promise<{ driveFileId: string }>((resolve, reject) => {
+        xhr.upload.onprogress = (e) => {
+          if (e.lengthComputable) {
+            const pct = 30 + Math.round((e.loaded / e.total) * 60); // 30% to 90%
+            setSnacks((s) => s.map((sn) => (sn.id === id ? { ...sn, progress: pct } : sn)));
+          }
+        };
+        xhr.onload = () => {
+          if (xhr.status >= 200 && xhr.status < 300) {
+            const data = JSON.parse(xhr.responseText || "{}");
+            if (data.id) resolve({ driveFileId: data.id });
+            else reject(new Error("No Drive ID after move upload"));
+          } else reject(new Error("Upload move failed"));
+        };
+        xhr.onerror = () => reject(new Error("Network error during move"));
+        xhr.send(blob);
+      });
+
+      const { driveFileId } = await uploadPromise;
+
+      // Step 5: Finalize in DB
+      const finalRes = await fetch("/api/files/upload/finalize", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+          ...(creds ? { "X-Credentials": creds } : {})
+        },
+        body: JSON.stringify({ driveFileId, accountIndex }),
+      });
+      if (!finalRes.ok) throw new Error("Failed to finalize moved file");
+
+      // Step 6: Delete from source account
+      setSnacks((s) => s.map((sn) => (sn.id === id ? { ...sn, name: `[3/3] Deleting Source: ${fileName}`, progress: 95 } : sn)));
+      const deleteRes = await fetch(`/api/files/${file.id}`, {
+        method: "DELETE",
+        headers: { ...(creds ? { "X-Credentials": creds || "" } : {}) }
+      });
+      if (!deleteRes.ok) console.warn("[Move] Warning: File was moved but source couldn't be deleted.");
+
+      setSnacks((s) => s.map((sn) => (sn.id === id ? { ...sn, status: "done", progress: 100, name: `Moved: ${fileName}` } : sn)));
+      listeners.current.forEach((fn) => fn());
+      
+    } catch (err: any) {
+      console.error("[Move] Progress Error:", err.message);
+      setSnacks((s) => s.map((sn) => (sn.id === id ? { ...sn, status: "error", name: `Move Failed: ${fileName}` } : sn)));
+    }
+  }, [getToken]);
+
   useEffect(() => {
     function onDragEnter(e: DragEvent) {
       const types = Array.from(e.dataTransfer?.types || []);
@@ -229,7 +329,7 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
   const failedUploads = snacks.filter(s => s.status === "error").length;
 
   return (
-    <UploadContext.Provider value={{ upload, addCompleteListener, setCurrentFolder, toast, updateToast, confirm }}>
+    <UploadContext.Provider value={{ upload, addCompleteListener, setCurrentFolder, toast, updateToast, confirm, moveFile }}>
       {children}
 
       {/* Drop overlay */}
@@ -254,11 +354,11 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
       {/* Confirm dialog */}
       {confirmState && (
         <div
-          className="fixed inset-0 z-[100] flex items-center justify-center bg-black/70 backdrop-blur-sm"
+          className="fixed inset-0 z-[150] flex items-center justify-center bg-black/70 backdrop-blur-sm px-4"
           onClick={() => setConfirmState(null)}
         >
           <div
-            className="relative w-full max-w-md rounded-2xl border border-sd-border bg-sd-s1 p-6 shadow-2xl animate-fade-up-d1"
+            className="relative w-full max-w-sm rounded-2xl border border-sd-border bg-sd-s1 p-6 shadow-2xl animate-fade-up-d1 mx-auto"
             onClick={(e) => e.stopPropagation()}
           >
             <div className="absolute top-0 left-6 right-6 h-px bg-gradient-to-r from-transparent via-sd-border2 to-transparent" />
@@ -289,7 +389,7 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
       )}
 
       {/* Toast notifications (excluding file uploads) */}
-      <div className="fixed bottom-6 top-auto md:top-6 md:bottom-auto right-4 md:right-6 z-[90] flex flex-col gap-3 pointer-events-none w-full max-w-[320px]">
+      <div className="fixed bottom-24 md:bottom-auto md:top-6 right-4 md:right-6 z-[140] flex flex-col gap-3 pointer-events-none w-[calc(100%-2rem)] md:w-full md:max-w-[320px]">
         {toasts.map((t) => (
           <div
             key={t.id}
@@ -321,15 +421,14 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
         ))}
       </div>
 
-      {/* Persistent Upload Manager Widget */}
       {showManager && (
         <div 
-          className="fixed bottom-0 right-4 md:right-8 z-[80] transition-all duration-500 ease-in-out w-full max-w-[360px] animate-fade-in"
+          className="fixed md:bottom-6 bottom-24 right-0 md:right-6 z-[110] transition-all duration-500 ease-in-out w-full md:w-[380px] px-4 md:px-0 animate-fade-in"
           style={{ 
-            transform: isManagerMinimized ? 'translateY(calc(100% - 48px))' : 'translateY(0)',
+            transform: isManagerMinimized ? (window.innerWidth < 768 ? 'translateY(calc(100% - 40px))' : 'translateY(calc(100% - 48px))') : 'translateY(0)',
           }}
         >
-          <div className="flex flex-col w-full rounded-t-2xl bg-sd-s1 border border-b-0 border-sd-border shadow-[0_-8px_40px_rgba(0,0,0,0.4)] overflow-hidden">
+          <div className="flex flex-col w-full rounded-2xl bg-sd-s1 border border-sd-border shadow-[0_8px_40px_rgba(0,0,0,0.5)] overflow-hidden glass">
             {/* Header */}
             <div 
               className="group flex items-center justify-between px-4 py-3 bg-sd-bg/80 backdrop-blur-md border-b border-sd-border cursor-pointer hover:bg-sd-hover transition-colors"
@@ -353,7 +452,7 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
                     </svg>
                   </div>
                 )}
-                <span className="text-sm font-semibold text-sd-text">
+                <span className="text-sm font-bold text-sd-text truncate max-w-[180px] sm:max-w-none">
                   {activeUploads > 0 
                     ? `Uploading ${activeUploads} ${activeUploads === 1 ? 'item' : 'items'}` 
                     : `${completedUploads} ${completedUploads === 1 ? 'upload' : 'uploads'} complete`}
@@ -404,8 +503,8 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
                       </div>
                     )}
                   </div>
-                  <div className="min-w-0 flex-1 flex flex-col justify-center">
-                    <p className="truncate text-xs font-medium text-sd-text" title={snack.name}>{snack.name}</p>
+                  <div className="min-w-0 flex-1 flex flex-col justify-center py-0.5">
+                    <p className="truncate text-[11px] sm:text-xs font-semibold text-sd-text" title={snack.name}>{snack.name}</p>
                     {snack.status === "uploading" ? (
                       <div className="mt-1.5 flex items-center gap-2">
                         <div className="h-1 w-full overflow-hidden rounded-full bg-sd-border relative">

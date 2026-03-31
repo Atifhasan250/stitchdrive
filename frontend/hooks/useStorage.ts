@@ -32,6 +32,8 @@ export function useStorage() {
       if (res.ok) {
         const data = await res.json();
         setAccounts(data);
+      } else if (res.status === 401) {
+        console.warn("[useStorage] Missing credentials detected.");
       }
     } catch (err) {
       console.error("[useStorage] Error:", err);

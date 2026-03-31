@@ -24,12 +24,9 @@ import {
   CartesianGrid,
   ResponsiveContainer,
 } from "recharts";
+import { formatBytes } from "@/lib/utils";
 
-function formatBytes(bytes: number): string {
-  if (bytes >= 1e9) return (bytes / 1e9).toFixed(1) + " GB";
-  if (bytes >= 1e6) return (bytes / 1e6).toFixed(1) + " MB";
-  return (bytes / 1e3).toFixed(0) + " KB";
-}
+
 
 const TYPE_COLORS: Record<string, string> = {
   Images: "#a855f7",        // purple-500

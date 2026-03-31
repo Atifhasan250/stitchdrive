@@ -1,41 +1,63 @@
 services:
+  # ── MongoDB Service ──────────────────────────────────────────────────────────
+  # Provides local, persistent storage without needing an external Atlas cluster.
+  mongodb:
+    image: mongo:latest
+    container_name: stitchdrive-db
+    ports:
+      - "27017:27017" # Host:Container
+    volumes:
+      - stitchdrive_mongo_data:/data/db
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
 
+  # ── Backend Service ──────────────────────────────────────────────────────────
   backend:
     build:
-      context: ./backend        # build context is the backend/ folder
+      context: ./backend
       dockerfile: Dockerfile
+    container_name: stitchdrive-backend
     ports:
       - "8000:8000"
+    depends_on:
+      mongodb:
+        condition: service_healthy
     environment:
-      # Allow browser requests from the frontend origin
-      FRONTEND_URL: http://localhost:3000
-      # Public URL the browser can reach — used to build the OAuth callback URI
-      # (request.base_url inside Docker would resolve to the internal service name)
-      BACKEND_URL: http://localhost:8000
-      # Persist the database in a named volume instead of inside the container
-      DB_PATH: /app/data/drivepool.db
-      # Point config.py at the bind-mounted credentials directory
-      CONFIG_DIR: /app/config
-    volumes:
-      # Google OAuth credentials — place credentials.json here before starting
-      - ./config:/app/config:ro
-      # SQLite database survives container restarts and image rebuilds
-      - drivepool_data:/app/data
+      - MONGO_URI=mongodb://mongodb:27017/stitchdrive
+      - PORT=8000
+      - NODE_ENV=production
+      - FRONTEND_URL=${FRONTEND_URL:-http://localhost:3000}
+      - BACKEND_URL=${BACKEND_URL:-http://localhost:8000}
+      - CLERK_PUBLISHABLE_KEY=${CLERK_PUBLISHABLE_KEY}
+      - CLERK_SECRET_KEY=${CLERK_SECRET_KEY}
     restart: unless-stopped
 
+  # ── Frontend Service ─────────────────────────────────────────────────────────
   frontend:
     build:
-      context: ./frontend       # build context is the frontend/ folder
+      context: ./frontend
       dockerfile: Dockerfile
       args:
-        # Server-side Next.js rewrites resolve via the Docker network service name
-        NEXT_PUBLIC_API_URL: http://backend:8000
+        # Baked in at build time for Clerk and API redirection
+        NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: ${NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY}
+        CLERK_SECRET_KEY: ${CLERK_SECRET_KEY}
+        NEXT_PUBLIC_API_URL: http://backend:8000 # Internal context
+    container_name: stitchdrive-frontend
     ports:
       - "3000:3000"
+    environment:
+      # Also available at runtime
+      - NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=${NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY}
+      - CLERK_SECRET_KEY=${CLERK_SECRET_KEY}
+      - NEXT_PUBLIC_API_URL=http://backend:8000 
     depends_on:
       - backend
     restart: unless-stopped
 
 volumes:
-  # Named volume — persists drivepool.db across rebuilds
-  drivepool_data:
+  # Persists the database even if containers are deleted
+  stitchdrive_mongo_data:

@@ -4,8 +4,10 @@ import Link from "next/link";
 import { useEffect, useState } from "react";
 import { useFiles } from "@/hooks/useFiles";
 import { useStorage } from "@/hooks/useStorage";
+import { formatBytes } from "@/lib/utils";
 import { type CachedStats, computeStats, getCachedStats, isStatsDirty, setCachedStats } from "@/hooks/useStats";
 import { CredentialsUpload } from "@/components/CredentialsUpload";
+import { AuthenticatedThumbnail } from "@/components/AuthenticatedThumbnail";
 
 type Account = {
   account_index: number;
@@ -16,11 +18,7 @@ type Account = {
   free: number;
 };
 
-function formatBytes(bytes: number): string {
-  if (bytes >= 1e9) return (bytes / 1e9).toFixed(1) + " GB";
-  if (bytes >= 1e6) return (bytes / 1e6).toFixed(1) + " MB";
-  return (bytes / 1e3).toFixed(0) + " KB";
-}
+
 
 type StatCardProps = {
   label: string;
@@ -173,12 +171,6 @@ export default function OverviewPage() {
               <h3 className="text-sm font-bold text-sd-text">Google Drive Credentials Required</h3>
               <p className="mt-1 text-sm text-sd-text2 font-medium">Please upload your <code className="text-rose-400 font-mono">credentials.json</code> file to enable cloud storage features. This data is stored locally in your browser and never leaves your device.</p>
             </div>
-            <button 
-              onClick={() => document.querySelector<HTMLButtonElement>("button[aria-label='Upload Credentials']")?.click()}
-              className="shrink-0 rounded-xl bg-rose-500 px-4 py-2 text-xs font-bold text-white shadow-glow-sm hover:bg-rose-600 transition"
-            >
-              Link Now
-            </button>
           </div>
         </div>
       )}
@@ -341,11 +333,10 @@ export default function OverviewPage() {
               <div key={file.id} className="file-card flex items-center gap-4 px-6 py-3.5 bg-sd-s1 hover:bg-sd-s2 transition-colors cursor-pointer rounded-none border-none">
                 <div className="flex-shrink-0">
                   {file.has_thumbnail ? (
-                    <img
-                      src={`/api/files/${file.id}/thumbnail`}
-                      alt=""
+                    <AuthenticatedThumbnail 
+                      fileId={file.id} 
+                      mimeType={file.mime_type} 
                       className="h-9 w-9 rounded-lg object-cover shadow-sm border border-sd-border/50"
-                      onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }}
                     />
                   ) : (
                     <FileTypeIcon mimeType={file.mime_type} />

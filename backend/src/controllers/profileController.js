@@ -47,7 +47,7 @@ export async function uploadAvatar(req, res) {
   const result = await uploadFile(
     account,
     req.file.buffer,
-    "_drivepool_avatar_",
+    "_stitchdrive_avatar_",
     mimeType,
     folderId
   );

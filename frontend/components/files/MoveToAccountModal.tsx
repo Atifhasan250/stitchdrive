@@ -15,82 +15,22 @@ export default function MoveToAccountModal({
   onSuccess: () => void;
 }) {
   const { accounts } = useStorage();
-  const { upload, toast, updateToast, confirm } = useUpload();
-  const [moving, setMoving] = useState(false);
+  const { moveFile, toast } = useUpload();
 
   // Filter out the account the file is already in
   const otherAccounts = accounts.filter((a) => a.account_index !== file.account_index && a.is_connected);
 
-  async function handleMove(targetAccountIndex: number) {
+  function handleMove(targetAccountIndex: number) {
     // Google Docs, Sheets, and Slides cannot be downloaded as binary media
     const isGoogleDoc = file.mime_type?.startsWith("application/vnd.google-apps.");
-    const isActuallyDownloadable = !isGoogleDoc || file.mime_type === "application/vnd.google-apps.folder";
     
     if (isGoogleDoc && file.mime_type !== "application/vnd.google-apps.folder") {
       toast(`Google Docs/Sheets cannot be moved directly. Please export them manually.`, "error");
       return;
     }
 
-    setMoving(true);
-    const tid = toast(`Moving "${file.file_name}" to another account...`, "loading");
-
-    try {
-      // 1. Get a temporary access token for the SOURCE account to download directly
-      const creds = localStorage.getItem("credentials");
-      const tokenRes = await fetch(`/api/accounts/${file.account_index}/token`, {
-        headers: {
-          ...(creds ? { "X-Credentials": creds } : {})
-        }
-      });
-      if (!tokenRes.ok) throw new Error("Failed to get source access token");
-      const { accessToken } = await tokenRes.json();
-
-      // 2. Download directly from Google to Browser (0 server bandwidth)
-      const downloadRes = await fetch(
-        `https://www.googleapis.com/drive/v3/files/${file.drive_file_id}?alt=media`,
-        {
-          method: "GET",
-          headers: { 
-            Authorization: `Bearer ${accessToken}`,
-          },
-          mode: "cors",
-        }
-      );
-
-      if (!downloadRes.ok) {
-        const errorText = await downloadRes.text().catch(() => "Unknown error");
-        console.error("[Move] Download failed:", downloadRes.status, errorText);
-        
-        if (downloadRes.status === 403 && errorText.includes("fileNotDownloadable")) {
-           throw new Error("This file type cannot be downloaded directly (Google Doc).");
-        }
-        throw new Error(`Failed to download: Google returned ${downloadRes.status}`);
-      }
-      
-      const blob = await downloadRes.blob();
-
-      // 3. Upload to target account (0 server bandwidth via resumable upload)
-      // Wrap the blob in a File object to preserve the filename and type
-      const movedFile = new File([blob], file.file_name, { type: file.mime_type || "application/octet-stream" });
-      await upload(movedFile, null, targetAccountIndex);
-
-      // 4. Delete from source
-      await fetch(`/api/files/${file.id}`, { 
-        method: "DELETE", 
-        headers: {
-          ...(creds ? { "X-Credentials": creds } : {})
-        }
-      });
-
-      updateToast(tid, "success", `Moved "${file.file_name}" successfully!`);
-      onSuccess();
-      onClose();
-    } catch (err: any) {
-      console.error("[Move] Error:", err);
-      updateToast(tid, "error", `Move failed: ${err.message}`);
-    } finally {
-      setMoving(false);
-    }
+    moveFile(file, targetAccountIndex);
+    onClose();
   }
 
   return (
@@ -112,7 +52,6 @@ export default function MoveToAccountModal({
             otherAccounts.map((acc) => (
               <button
                 key={acc.account_index}
-                disabled={moving}
                 onClick={() => handleMove(acc.account_index)}
                 className="flex w-full items-center justify-between rounded-xl border border-sd-border bg-sd-bg px-4 py-3 transition hover:bg-sd-hover group disabled:opacity-50"
               >

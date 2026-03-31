@@ -20,6 +20,8 @@ import {
   uploadFile,
   buildService,
   deleteDriveFile,
+  cleanupDeletedFiles,
+  reconcileAccountFiles,
 } from "../services/driveService.js";
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -177,7 +179,8 @@ export async function getThumbnail(req, res) {
 
     const contentType = response.headers.get("content-type") || "image/jpeg";
     res.setHeader("Content-Type", contentType);
-    res.setHeader("Cache-Control", "public, max-age=86400"); // Cache for 1 day
+    // Aggressive caching: Thumbnails rarely change. 7 days to save on free tier CPU/Bandwidth.
+    res.setHeader("Cache-Control", "public, max-age=604800, stale-while-revalidate=86400"); 
 
     const buffer = await response.arrayBuffer();
     return res.send(Buffer.from(buffer));
@@ -365,14 +368,31 @@ export async function deleteFile(req, res) {
   if (!file) return res.status(404).json({ detail: "File not found" });
 
   const account = await DriveAccount.findOne({ ownerId, accountIndex: file.accountIndex });
+  let trashSuccess = false;
+
   if (account && account.isConnected) {
     try {
       await trashDriveFile(account, file.driveFileId, req.clientCredentials);
-    } catch (_) {}
+      trashSuccess = true;
+    } catch (err) {
+      const status = err?.code || err?.status || err?.response?.status;
+      // If already gone (404), we consider it a success for our sync
+      if (status === 404) trashSuccess = true;
+      else {
+        console.error(`[Delete] Trash failed for ${file.driveFileId}:`, err.message);
+        return res.status(500).json({ detail: "Could not move file to trash in Google Drive" });
+      }
+    }
+  } else {
+    // If account is disconnected, we can't trash it on Drive. 
+    // Usually we should error out to prevent desync.
+    return res.status(400).json({ detail: "Account disconnected. Reconnect to delete." });
   }
 
-  await file.deleteOne();
-  return res.status(204).send();
+  if (trashSuccess) {
+    await file.deleteOne();
+    return res.status(204).send();
+  }
 }
 
 // ── GET /api/files/shared/:accountIndex/:driveFileId/download ─────────────────
@@ -540,6 +560,41 @@ export async function deleteTrashFile(req, res) {
     await deleteDriveFile(account, driveFileId, req.clientCredentials);
     return res.status(204).send();
   } catch (err) {
+    return res.status(500).json({ detail: err.message });
+  }
+}
+// ── POST /api/files/cleanup ──────────────────────────────────────────────────
+export async function cleanupFiles(req, res) {
+  const ownerId = req.ownerId;
+  const { accountIndex, currentDriveIds } = req.body;
+
+  if (accountIndex === undefined || !Array.isArray(currentDriveIds)) {
+    return res.status(400).json({ detail: "accountIndex and currentDriveIds (array) are required" });
+  }
+
+  try {
+    await cleanupDeletedFiles(ownerId, accountIndex, currentDriveIds);
+    return res.json({ ok: true });
+  } catch (err) {
+    console.error("[Cleanup] Error:", err.message);
+    return res.status(500).json({ detail: err.message });
+  }
+}
+
+// ── POST /api/files/reconcile ────────────────────────────────────────────────
+export async function reconcileFiles(req, res) {
+  const ownerId = req.ownerId;
+  const { accountIndex, driveFiles } = req.body;
+
+  if (accountIndex === undefined || !Array.isArray(driveFiles)) {
+    return res.status(400).json({ detail: "accountIndex and driveFiles (array) are required" });
+  }
+
+  try {
+    await reconcileAccountFiles(ownerId, accountIndex, driveFiles);
+    return res.json({ ok: true });
+  } catch (err) {
+    console.error("[Reconcile] Error:", err.message);
     return res.status(500).json({ detail: err.message });
   }
 }
