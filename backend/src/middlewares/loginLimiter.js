@@ -1,9 +1,9 @@
 import { rateLimit } from "express-rate-limit";
 
-// 10 login attempts per 15 minutes per IP — prevents PIN brute-force
+// 30 login/oauth attempts per 15 minutes per IP
 export const loginLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
-  max: 10,
+  max: 30,
   standardHeaders: true,
   legacyHeaders: false,
   message: { detail: "Too many login attempts. Please try again in 15 minutes." },

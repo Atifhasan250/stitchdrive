@@ -1,7 +1,7 @@
 import { google } from "googleapis";
 import DriveAccount from "../models/DriveAccount.js";
 import File from "../models/File.js";
-import { encryptToken } from "../services/authService.js";
+import { encryptToken, decryptToken } from "../services/authService.js";
 import {
   getAllQuotas,
   invalidateOAuth2Cache,
@@ -131,12 +131,11 @@ export async function getNewOAuthUrl(req, res) {
   const state = Buffer.from(JSON.stringify({ ownerId, accountIndex: newIndex })).toString("base64");
   const authUrl = getAuthUrl(oauth2Client, state);
   if (req.headers["x-credentials"]) {
-    res.cookie("sd_creds", req.headers["x-credentials"], {
-      httpOnly: true,
-      secure: process.env.NODE_ENV === "production",
-      sameSite: "lax",
-      maxAge: 300000, // 5 mins
-    });
+    const account = await DriveAccount.findOne({ ownerId, accountIndex: newIndex });
+    if (account) {
+      account.tempCredentials = encryptToken(req.headers["x-credentials"]);
+      await account.save();
+    }
   }
 
   return res.json({ auth_url: authUrl });
@@ -157,12 +156,11 @@ export async function getOAuthUrl(req, res) {
   const state = Buffer.from(JSON.stringify({ ownerId, accountIndex })).toString("base64");
   const authUrl = getAuthUrl(oauth2Client, state);
   if (req.headers["x-credentials"]) {
-    res.cookie("sd_creds", req.headers["x-credentials"], {
-      httpOnly: true,
-      secure: process.env.NODE_ENV === "production",
-      sameSite: "lax",
-      maxAge: 300000, // 5 mins
-    });
+    const account = await DriveAccount.findOne({ ownerId, accountIndex });
+    if (account) {
+      account.tempCredentials = encryptToken(req.headers["x-credentials"]);
+      await account.save();
+    }
   }
   
   return res.json({ auth_url: authUrl });
@@ -171,22 +169,13 @@ export async function getOAuthUrl(req, res) {
 // ── GET /api/accounts/oauth/callback ──────────────────────────────────────────
 export async function oauthCallback(req, res) {
   const { code, state, error } = req.query;
-  const credsCookie = req.cookies?.sd_creds;
-  let clientCredentials = null;
-  if (credsCookie) {
-    try {
-      clientCredentials = JSON.parse(credsCookie);
-    } catch (e) {}
-  }
 
   if (error) {
     console.warn("[OAuth] User denied consent or error returned:", error);
-    res.clearCookie("sd_creds");
     return res.redirect(`${config.FRONTEND_URL}/dashboard/settings?error=oauth_denied`);
   }
 
   if (!code || !state) {
-    res.clearCookie("sd_creds");
     return res.redirect(`${config.FRONTEND_URL}/dashboard/settings?error=oauth_invalid`);
   }
 
@@ -194,7 +183,6 @@ export async function oauthCallback(req, res) {
   try {
     stateObj = JSON.parse(Buffer.from(state, "base64").toString("utf-8"));
   } catch (err) {
-    res.clearCookie("sd_creds");
     return res.redirect(`${config.FRONTEND_URL}/dashboard/settings?error=oauth_invalid`);
   }
 
@@ -202,11 +190,16 @@ export async function oauthCallback(req, res) {
   const ownerId = stateObj.ownerId;
   
   if (isNaN(accountIndex) || !ownerId) {
-    res.clearCookie("sd_creds");
     return res.redirect(`${config.FRONTEND_URL}/dashboard/settings?error=oauth_invalid`);
   }
 
   try {
+    let account = await DriveAccount.findOne({ ownerId, accountIndex });
+    if (!account || !account.tempCredentials) {
+      throw new Error("Temporary credentials not found in database. The connection session may have expired.");
+    }
+
+    const clientCredentials = JSON.parse(decryptToken(account.tempCredentials));
     const redirectUri = config.BACKEND_URL.replace(/\/$/, "") + "/api/accounts/oauth/callback";
     const oauth2Client = getOAuthFlow(redirectUri, clientCredentials);
     const { tokens } = await oauth2Client.getToken(code);
@@ -227,17 +220,10 @@ export async function oauthCallback(req, res) {
     if (existingOther) {
       console.warn(`[OAuth] Duplicate account detected: ${email} for owner ${ownerId}`);
       // If we were creating a NEW slot, let's clean it up since it's a duplicate
-      const attemptAccount = await DriveAccount.findOne({ ownerId, accountIndex });
-      if (attemptAccount && !attemptAccount.isConnected && !attemptAccount.email) {
-        await attemptAccount.deleteOne();
+      if (!account.isConnected && !account.email) {
+        await account.deleteOne();
       }
-      res.clearCookie("sd_creds");
       return res.redirect(`${config.FRONTEND_URL}/dashboard/settings?error=account_already_connected`);
-    }
-
-    let account = await DriveAccount.findOne({ ownerId, accountIndex });
-    if (!account) {
-      account = new DriveAccount({ ownerId, accountIndex });
     }
 
     invalidateOAuth2Cache(ownerId, accountIndex);
@@ -249,6 +235,7 @@ export async function oauthCallback(req, res) {
       account.refreshToken = encryptToken(tokens.refresh_token);
     }
 
+    account.tempCredentials = null;
     await account.save();
 
     // Sync in the background for this user
@@ -256,11 +243,14 @@ export async function oauthCallback(req, res) {
       console.error("[Sync] Background sync error:", err.message)
     );
 
-    res.clearCookie("sd_creds");
     return res.redirect(`${config.FRONTEND_URL}/dashboard/settings?status=success`);
   } catch (err) {
-    console.error("[OAuth] Callback Processing Error:", err);
-    res.clearCookie("sd_creds");
+    console.error("[OAuth] Callback Processing Error:", {
+      message: err.message,
+      stack: err.stack,
+      code: err.code,
+      response: err.response?.data
+    });
     return res.redirect(`${config.FRONTEND_URL}/dashboard/settings?error=oauth_processing_failed`);
   }
 }

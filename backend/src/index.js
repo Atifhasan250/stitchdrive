@@ -19,6 +19,7 @@ import profileRoutes from "./routes/profile.js";
 import { errorHandler } from "./middlewares/errorHandler.js";
 
 const app = express();
+app.set("trust proxy", 1);
 const PORT = process.env.PORT || 8000;
 const IS_PROD = process.env.NODE_ENV === "production";
 
@@ -66,6 +67,7 @@ app.use("/api/files", filesRoutes);
 app.use("/api/profile", profileRoutes);
 
 // ── Health check ──────────────────────────────────────────────────────────────
+app.get("/", (req, res) => res.json({ message: "StitchDrive API is running", status: "active" }));
 app.get("/active", (req, res) => res.json({ status: "active" }));
 
 // ── Global error handler (must be last) ──────────────────────────────────────

@@ -9,6 +9,7 @@ const driveAccountSchema = new mongoose.Schema(
     accessToken: { type: String, default: null },
     tokenExpiry: { type: Date, default: null },
     isConnected: { type: Boolean, default: false, required: true },
+    tempCredentials: { type: String, default: null },
   },
   { collection: "drive_accounts", timestamps: false }
 );
